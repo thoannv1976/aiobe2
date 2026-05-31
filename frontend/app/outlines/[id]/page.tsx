@@ -1,5 +1,6 @@
 "use client";
 import { Fragment, useEffect, useState } from "react";
+import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { api, API_BASE, getToken } from "@/lib/api";
 
@@ -411,6 +412,39 @@ export default function OutlineEditor() {
               </button>
             )}
           </div>
+        </div>
+      </section>
+
+      {/* Điều hướng các bước tiếp theo của học phần (sau khi có đề cương) */}
+      <section className="rounded border border-indigo-200 bg-indigo-50 p-4">
+        <div className="mb-2 text-sm font-semibold text-slate-700">
+          Bước tiếp theo cho học phần này:
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Link
+            href={`/courses/${outline.course_id}/textbooks`}
+            className="rounded bg-white px-3 py-2 text-sm font-medium text-indigo-700 ring-1 ring-indigo-200 hover:bg-indigo-100"
+          >
+            1. Soạn giáo trình →
+          </Link>
+          <Link
+            href={`/courses/${outline.course_id}/lectures`}
+            className="rounded bg-white px-3 py-2 text-sm font-medium text-indigo-700 ring-1 ring-indigo-200 hover:bg-indigo-100"
+          >
+            2. Soạn bài giảng →
+          </Link>
+          <Link
+            href={`/courses/${outline.course_id}/questions`}
+            className="rounded bg-white px-3 py-2 text-sm font-medium text-indigo-700 ring-1 ring-indigo-200 hover:bg-indigo-100"
+          >
+            3. Ma trận đề thi & Ngân hàng câu hỏi →
+          </Link>
+          <Link
+            href={`/courses/${outline.course_id}`}
+            className="rounded bg-white px-3 py-2 text-sm font-medium text-indigo-700 ring-1 ring-indigo-200 hover:bg-indigo-100"
+          >
+            4. Sinh đề thi →
+          </Link>
         </div>
       </section>
 
