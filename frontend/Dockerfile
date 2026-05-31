@@ -11,5 +11,6 @@ FROM node:22-slim AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=builder /app ./
-EXPOSE 3000
-CMD ["npm", "run", "start"]
+# Cloud Run cấp cổng qua $PORT (mặc định 8080); next start đọc -p.
+EXPOSE 8080
+CMD ["sh", "-c", "npm run start -- -p ${PORT:-3000}"]

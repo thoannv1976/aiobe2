@@ -1,0 +1,10 @@
+# Build & push image backend (FastAPI) lên Artifact Registry.
+# Dùng: gcloud builds submit --config deploy/cloudbuild.backend.yaml \
+#         --substitutions _IMAGE=<image-uri> backend
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args: ["build", "-t", "${_IMAGE}", "."]
+images:
+  - "${_IMAGE}"
+options:
+  logging: CLOUD_LOGGING_ONLY

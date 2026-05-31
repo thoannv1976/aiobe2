@@ -31,8 +31,11 @@ for r in (auth, programs, outlines, textbooks, questions, exams, extraction, rep
 
 @app.on_event("startup")
 def on_startup() -> None:
-    # Dev tiện lợi: tạo bảng nếu chưa có (production dùng Alembic migration).
-    Base.metadata.create_all(bind=engine)
+    # Dev tiện lợi (SQLite): tạo bảng nếu chưa có.
+    # Production (Postgres/Cloud SQL): schema do Alembic quản lý qua migrate job,
+    # không create_all để tránh xung đột với migration.
+    if settings.database_url.startswith("sqlite"):
+        Base.metadata.create_all(bind=engine)
 
 
 @app.get("/api/health")

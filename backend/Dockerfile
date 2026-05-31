@@ -11,5 +11,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-EXPOSE 8000
-CMD ["sh", "-c", "alembic upgrade head && python -m app.seed && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+# Cloud Run cấp cổng qua $PORT (mặc định 8080). Migrate/seed chạy riêng bằng Cloud Run Job
+# (xem deploy/), KHÔNG chạy trong CMD để tránh chạy lại mỗi lần cold-start.
+EXPOSE 8080
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

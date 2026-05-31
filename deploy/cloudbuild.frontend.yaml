@@ -1,0 +1,16 @@
+# Build & push image frontend (Next.js) với NEXT_PUBLIC_API_BASE bake lúc build.
+# Dùng: gcloud builds submit --config deploy/cloudbuild.frontend.yaml \
+#         --substitutions _IMAGE=<image-uri>,_API_BASE=<url-backend> frontend
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --build-arg
+      - NEXT_PUBLIC_API_BASE=${_API_BASE}
+      - -t
+      - ${_IMAGE}
+      - .
+images:
+  - "${_IMAGE}"
+options:
+  logging: CLOUD_LOGGING_ONLY
