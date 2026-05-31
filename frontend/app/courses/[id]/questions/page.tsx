@@ -119,6 +119,35 @@ export default function QuestionsPage() {
 
   const [file, setFile] = useState<File | null>(null);
 
+  // Sinh câu hỏi bằng AI
+  const [genBusy, setGenBusy] = useState(false);
+  const [genNum, setGenNum] = useState<number>(3);
+  const [genType, setGenType] = useState<string>("mcq_single");
+  const [genCloIds, setGenCloIds] = useState<number[]>([]);
+  const [genMsg, setGenMsg] = useState("");
+
+  async function generateQuestions() {
+    setErr("");
+    setGenMsg("");
+    setGenBusy(true);
+    try {
+      const r = await api(`/api/courses/${id}/questions/generate`, {
+        method: "POST",
+        body: JSON.stringify({
+          clo_ids: genCloIds,
+          num_per_clo: genNum,
+          question_type: genType,
+        }),
+      });
+      setGenMsg(`Đã tạo ${r.created} câu hỏi. Hãy rà soát/chỉnh sửa bên dưới.`);
+      await load();
+    } catch (e: any) {
+      setErr(e.message);
+    } finally {
+      setGenBusy(false);
+    }
+  }
+
   async function load() {
     try {
       const ol: any[] = await api(`/api/courses/${id}/outlines`);
@@ -393,6 +422,71 @@ export default function QuestionsPage() {
           </div>
         </section>
       )}
+
+      {/* Sinh câu hỏi bằng AI */}
+      <section className="rounded-lg border border-green-200 bg-green-50/40 p-4">
+        <h2 className="mb-1 text-lg font-semibold">✨ Tạo câu hỏi bằng AI</h2>
+        <p className="mb-3 text-sm text-slate-600">
+          AI soạn câu hỏi bám theo CLO của đề cương (gắn CLO + Bloom + độ khó). Câu hỏi được
+          ghi vào ngân hàng — hãy rà soát/chỉnh sửa sau khi tạo.
+        </p>
+        {clos.length === 0 ? (
+          <p className="text-sm text-amber-700">
+            ⚠ Học phần chưa có đề cương/CLO. Hãy tạo đề cương trước khi dùng chức năng này.
+          </p>
+        ) : (
+          <div className="flex flex-wrap items-end gap-3">
+            <label className="text-sm">
+              Số câu / CLO
+              <input
+                type="number"
+                min={1}
+                max={20}
+                value={genNum}
+                onChange={(e) => setGenNum(Number(e.target.value) || 1)}
+                className="mt-1 block w-24 rounded border p-1"
+              />
+            </label>
+            <label className="text-sm">
+              Loại câu hỏi
+              <select
+                value={genType}
+                onChange={(e) => setGenType(e.target.value)}
+                className="mt-1 block rounded border p-1"
+              >
+                {Object.entries(TYPE).map(([k, v]) => (
+                  <option key={k} value={k}>{v}</option>
+                ))}
+              </select>
+            </label>
+            <label className="text-sm">
+              CLO áp dụng
+              <select
+                multiple
+                value={genCloIds.map(String)}
+                onChange={(e) =>
+                  setGenCloIds(Array.from(e.target.selectedOptions).map((o) => Number(o.value)))
+                }
+                className="mt-1 block min-w-[10rem] rounded border p-1"
+                size={Math.min(clos.length, 4)}
+              >
+                {clos.map((c) => (
+                  <option key={c.id} value={c.id}>{c.code}</option>
+                ))}
+              </select>
+              <span className="text-xs text-slate-400">(bỏ trống = tất cả CLO)</span>
+            </label>
+            <button
+              onClick={generateQuestions}
+              disabled={genBusy}
+              className="rounded bg-green-600 px-4 py-2 text-white disabled:opacity-50"
+            >
+              {genBusy ? "AI đang soạn..." : "Tạo câu hỏi bằng AI"}
+            </button>
+          </div>
+        )}
+        {genMsg && <p className="mt-2 text-sm text-green-700">{genMsg}</p>}
+      </section>
 
       {/* Form thêm/sửa câu hỏi */}
       <section className="rounded border bg-white p-4 shadow-sm">
