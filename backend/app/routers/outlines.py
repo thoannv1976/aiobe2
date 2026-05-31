@@ -94,12 +94,18 @@ def generate_outline(
     course_id: int,
     template_doc_id: int | None = None,
     aunqa_doc_id: int | None = None,
+    num_clos: str = "4–6",
+    num_weeks: int = 15,
+    assessment_scheme: str = "10-30-60",
+    bilingual: bool = True,
     db: Session = Depends(get_db),
     user: User = Depends(LECTURER),
 ):
     """Sinh đề cương bằng AI từ CTĐT + PLO + PI + ma trận Học phần×PLO (SPEC 4.3).
 
     Tùy chọn truyền template_doc_id (mẫu đề cương) và aunqa_doc_id (chuẩn AUN-QA) đã upload.
+    Tham số tinh chỉnh: num_clos, num_weeks, assessment_scheme (10-30-60|10-40-50|20-30-50|auto),
+    bilingual (CLO song ngữ Việt-Anh).
     Ghi ra một đề cương DRAFT (CLO, ma trận CLO×PLO, đánh giá, kế hoạch dạy) để người dùng rà soát.
     """
     course = db.get(Course, course_id)
@@ -140,6 +146,10 @@ def generate_outline(
             course_plo=course_plo,
             template_text=_doc_text(template_doc_id),
             aunqa_text=_doc_text(aunqa_doc_id),
+            num_clos=num_clos,
+            num_weeks=num_weeks,
+            assessment_scheme=assessment_scheme,
+            bilingual=bilingual,
         )
     except Exception as e:  # noqa: BLE001
         raise HTTPException(400, f"Sinh đề cương thất bại: {e}")

@@ -16,23 +16,59 @@ OUTLINE_SYSTEM_PROMPT = """Bạn là chuyên gia thiết kế chương trình đ
 bảo đảm "constructive alignment" (nhất quán dọc CLO ↔ dạy-học ↔ đánh giá).
 
 Yêu cầu bắt buộc về chất lượng (AUN-QA):
-- CLO viết theo thang Bloom, đo lường được, phủ kiến thức/kỹ năng/thái độ phù hợp học phần.
+- Soạn KHOẢNG {num_clos} CLO (chuẩn đầu ra học phần), không quá ít cũng không quá nhiều.
+- CLO viết theo thang Bloom, đo lường được, MỖI CLO bắt đầu bằng một động từ Bloom. \
+{bloom_style}
+- CLO phủ cân đối kiến thức/kỹ năng/thái độ phù hợp tính chất học phần.
 - MỖI CLO phải ánh xạ tới ít nhất một PLO của chương trình (dùng đúng mã PLO được cung cấp), \
 kèm mức đóng góp I (Introduce) / R (Reinforce) / M (Master) hợp lý với vai trò học phần.
-- MỖI CLO phải được phủ bởi ít nhất một cấu phần đánh giá.
+- MỖI CLO phải được phủ bởi ít nhất một cấu phần đánh giá (constructive alignment).
+- {assessment_rule}
 - Tổng trọng số các cấu phần đánh giá BẰNG ĐÚNG 100.
-- Kế hoạch giảng dạy theo tuần, mỗi tuần gắn với CLO liên quan; phủ hết các CLO.
+- Kế hoạch giảng dạy trải {num_weeks} tuần, mỗi tuần một chủ đề gắn với (các) CLO liên quan; \
+toàn bộ CLO đều phải xuất hiện trong kế hoạch giảng dạy.
+- Phương pháp dạy-học đa dạng, phù hợp để đạt CLO (thuyết giảng, thảo luận, thực hành, dự án…).
 
 Chỉ trả về DUY NHẤT một JSON hợp lệ (không markdown, không văn bản thừa) theo schema:
-{
+{{
   "description": "mô tả học phần",
   "teaching_methods": ["..."],
   "references": ["..."],
-  "clos": [{"code":"CLO1","description":"","bloom_level":"remember|understand|apply|analyze|evaluate|create","plos":[{"plo_code":"PLO1","level":"I|R|M"}]}],
-  "assessments": [{"name":"","type":"","weight_percent":0,"clo_codes":["CLO1"]}],
-  "lessons": [{"week":1,"topic":"","clo_codes":["CLO1"]}]
-}
+  "clos": [{{"code":"CLO1","description":"","bloom_level":"remember|understand|apply|analyze|evaluate|create","plos":[{{"plo_code":"PLO1","level":"I|R|M"}}]}}],
+  "assessments": [{{"name":"","type":"","weight_percent":0,"clo_codes":["CLO1"]}}],
+  "lessons": [{{"week":1,"topic":"","clo_codes":["CLO1"]}}]
+}}
 Chỉ dùng các mã PLO có trong dữ liệu được cung cấp. KHÔNG bịa PLO không tồn tại."""
+
+# Các cơ cấu đánh giá định sẵn (tên hiển thị → mô tả cấu phần+trọng số).
+ASSESSMENT_SCHEMES = {
+    "10-30-60": "Dùng 3 cấu phần đánh giá: Chuyên cần 10%, Giữa kỳ 30%, Cuối kỳ 60%.",
+    "10-40-50": "Dùng 3 cấu phần đánh giá: Chuyên cần 10%, Giữa kỳ 40%, Cuối kỳ 50%.",
+    "20-30-50": "Dùng 3 cấu phần đánh giá: Đánh giá quá trình 20%, Giữa kỳ 30%, Cuối kỳ 50%.",
+    "auto": "Tự đề xuất 3–4 cấu phần đánh giá với trọng số hợp lý cho học phần.",
+}
+
+BLOOM_STYLE_BILINGUAL = (
+    "Viết mô tả CLO SONG NGỮ: tiếng Việt trước, kèm động từ Bloom tiếng Anh trong ngoặc đơn "
+    "ở đầu, ví dụ: 'Phân tích (Analyze) các yếu tố...'."
+)
+BLOOM_STYLE_VI = "Viết mô tả CLO bằng tiếng Việt với động từ Bloom rõ ràng."
+
+
+def build_system_prompt(
+    num_clos: str = "4–6",
+    num_weeks: int = 15,
+    assessment_scheme: str = "10-30-60",
+    bilingual: bool = True,
+) -> str:
+    return OUTLINE_SYSTEM_PROMPT.format(
+        num_clos=num_clos,
+        num_weeks=num_weeks,
+        assessment_rule=ASSESSMENT_SCHEMES.get(assessment_scheme, ASSESSMENT_SCHEMES["auto"]),
+        bloom_style=BLOOM_STYLE_BILINGUAL if bilingual else BLOOM_STYLE_VI,
+    )
+
+
 
 
 def _strip_to_json(text: str) -> str:
@@ -52,8 +88,16 @@ def generate_outline_ai(
     course_plo: list[dict],
     template_text: str = "",
     aunqa_text: str = "",
+    num_clos: str = "4–6",
+    num_weeks: int = 15,
+    assessment_scheme: str = "10-30-60",
+    bilingual: bool = True,
 ) -> GeneratedOutline:
-    """Gọi Claude sinh đề cương; validate Pydantic. Cần ANTHROPIC_API_KEY."""
+    """Gọi Claude sinh đề cương; validate Pydantic. Cần ANTHROPIC_API_KEY.
+
+    Tham số tinh chỉnh (theo quy định trường): số CLO, số tuần, cơ cấu đánh giá,
+    CLO song ngữ Việt(Anh) hay chỉ tiếng Việt.
+    """
     if not settings.anthropic_api_key:
         raise RuntimeError("Chưa cấu hình ANTHROPIC_API_KEY.")
     import anthropic
@@ -85,7 +129,7 @@ def generate_outline_ai(
     msg = client.messages.create(
         model=settings.anthropic_model,
         max_tokens=8000,
-        system=OUTLINE_SYSTEM_PROMPT,
+        system=build_system_prompt(num_clos, num_weeks, assessment_scheme, bilingual),
         messages=[{"role": "user", "content": user_content}],
     )
     raw = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")

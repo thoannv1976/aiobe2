@@ -19,6 +19,7 @@ export default function CourseDetail() {
   const [aunqaDocs, setAunqaDocs] = useState<any[]>([]);
   const [templateId, setTemplateId] = useState<string>("");
   const [aunqaId, setAunqaId] = useState<string>("");
+  const [scheme, setScheme] = useState<string>("10-30-60");
 
   async function load() {
     try {
@@ -66,6 +67,7 @@ export default function CourseDetail() {
       const qs = new URLSearchParams();
       if (templateId) qs.set("template_doc_id", templateId);
       if (aunqaId) qs.set("aunqa_doc_id", aunqaId);
+      qs.set("assessment_scheme", scheme);
       const o = await api(`/api/courses/${id}/generate-outline?${qs.toString()}`, { method: "POST" });
       window.location.href = `/outlines/${o.id}`;
     } catch (e: any) {
@@ -169,6 +171,12 @@ export default function CourseDetail() {
               {aunqaDocs.map((d) => (
                 <option key={d.id} value={d.id}>{d.original_name}</option>
               ))}
+            </select>
+            <select value={scheme} onChange={(e) => setScheme(e.target.value)} className="rounded border p-1" title="Cơ cấu đánh giá">
+              <option value="10-30-60">CC10 / GK30 / CK60</option>
+              <option value="10-40-50">CC10 / GK40 / CK50</option>
+              <option value="20-30-50">QT20 / GK30 / CK50</option>
+              <option value="auto">AI tự đề xuất</option>
             </select>
             <button
               onClick={generateOutlineAI}
