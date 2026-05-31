@@ -380,6 +380,18 @@ export default function TextbooksPage() {
               />
               <span className="block text-xs text-slate-400">(0 = AI tự quyết)</span>
             </label>
+            <label className="text-sm">
+              Số trang/chương
+              <input
+                type="number"
+                min={5}
+                max={60}
+                value={deepPages}
+                onChange={(e) => setDeepPages(Number(e.target.value) || 30)}
+                className="mt-1 block w-24 rounded border p-1"
+              />
+              <span className="block text-xs text-slate-400">(dài hơn = lâu hơn)</span>
+            </label>
             <button
               onClick={() => generateTextbookAI(true)}
               disabled={genBusy}
