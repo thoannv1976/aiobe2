@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.models import (
     Assessment,
     AssessmentClo,
+    Chapter,
     Clo,
     CloPlo,
     Course,
@@ -22,6 +23,7 @@ from app.models import (
     LessonPlanClo,
     Plo,
     Question,
+    Textbook,
 )
 
 
@@ -180,3 +182,107 @@ def exam_to_docx(db: Session, exam_id: int, variant: int = 1, with_answers: bool
     doc.save(buf)
     buf.seek(0)
     return buf.read()
+
+
+# ---------------------------------------------------------------------------
+# Giáo trình (SPEC 4.4): xuất DOCX và PDF, hỗ trợ nội dung Markdown đơn giản.
+# ---------------------------------------------------------------------------
+def _gather_textbook(db: Session, textbook_id: int):
+    tb = db.get(Textbook, textbook_id)
+    if not tb:
+        raise ValueError("Không tìm thấy giáo trình")
+    course = db.get(Course, tb.course_id)
+    chapters = (
+        db.query(Chapter).filter(Chapter.textbook_id == textbook_id).order_by(Chapter.order).all()
+    )
+    return tb, course, chapters
+
+
+def _md_lines(text: str):
+    """Tách Markdown thành các khối (kind, text) đơn giản: h2/h3/bullet/para."""
+    for raw in (text or "").split("\n"):
+        line = raw.rstrip()
+        if not line.strip():
+            continue
+        if line.startswith("### "):
+            yield ("h3", line[4:].strip())
+        elif line.startswith("## "):
+            yield ("h2", line[3:].strip())
+        elif line.startswith("# "):
+            yield ("h2", line[2:].strip())
+        elif line.lstrip().startswith(("- ", "* ")):
+            yield ("bullet", line.lstrip()[2:].strip())
+        else:
+            yield ("para", line.strip())
+
+
+def textbook_to_docx(db: Session, textbook_id: int) -> bytes:
+    tb, course, chapters = _gather_textbook(db, textbook_id)
+    doc = _new_doc()
+    doc.add_heading(tb.title, level=0)
+    if course:
+        doc.add_paragraph(f"Học phần: {course.code} — {course.name}")
+    doc.add_paragraph(f"Phiên bản: v{tb.version} · Trạng thái: {tb.status}")
+
+    for ch in chapters:
+        doc.add_heading(f"Chương {ch.order}. {ch.title}", level=1)
+        for kind, txt in _md_lines(ch.content_richtext or ""):
+            if kind == "h2":
+                doc.add_heading(txt, level=2)
+            elif kind == "h3":
+                doc.add_heading(txt, level=3)
+            elif kind == "bullet":
+                doc.add_paragraph(txt, style="List Bullet")
+            else:
+                doc.add_paragraph(txt)
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    buf.seek(0)
+    return buf.read()
+
+
+_FONT_REGULAR = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+_FONT_BOLD = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+
+
+def textbook_to_pdf(db: Session, textbook_id: int) -> bytes:
+    """Xuất giáo trình ra PDF (fpdf2 + font DejaVu hỗ trợ tiếng Việt)."""
+    from fpdf import FPDF
+
+    tb, course, chapters = _gather_textbook(db, textbook_id)
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_font("DejaVu", "", _FONT_REGULAR)
+    pdf.add_font("DejaVu", "B", _FONT_BOLD)
+    pdf.add_page()
+
+    pdf.set_font("DejaVu", "B", 18)
+    pdf.multi_cell(pdf.epw, 10, tb.title)
+    pdf.set_font("DejaVu", "", 11)
+    if course:
+        pdf.multi_cell(pdf.epw, 7, f"Học phần: {course.code} — {course.name}")
+    pdf.multi_cell(pdf.epw, 7, f"Phiên bản: v{tb.version} · Trạng thái: {tb.status}")
+    pdf.ln(4)
+
+    for ch in chapters:
+        pdf.set_font("DejaVu", "B", 15)
+        pdf.multi_cell(pdf.epw, 9, f"Chương {ch.order}. {ch.title}")
+        pdf.ln(1)
+        for kind, txt in _md_lines(ch.content_richtext or ""):
+            if kind == "h2":
+                pdf.set_font("DejaVu", "B", 13)
+                pdf.multi_cell(pdf.epw, 8, txt)
+            elif kind == "h3":
+                pdf.set_font("DejaVu", "B", 12)
+                pdf.multi_cell(pdf.epw, 7, txt)
+            elif kind == "bullet":
+                pdf.set_font("DejaVu", "", 11)
+                pdf.multi_cell(pdf.epw, 6, f"  • {txt}")
+            else:
+                pdf.set_font("DejaVu", "", 11)
+                pdf.multi_cell(pdf.epw, 6, txt)
+        pdf.ln(3)
+
+    out = pdf.output()
+    return bytes(out)

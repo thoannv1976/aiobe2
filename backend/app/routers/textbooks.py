@@ -1,4 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.deps import get_current_user, require_roles
@@ -6,10 +8,25 @@ from app.database import get_db
 from app.models import Chapter, ChapterClo, Clo, Course, CourseOutline, Role, Textbook, User
 from app.schemas.content import ChapterCreate, ChapterOut, TextbookCreate, TextbookOut
 from app.services.audit import log_action
+from app.services.exports import textbook_to_docx, textbook_to_pdf
 from app.services.extraction import suggest_chapter_outline
+from app.services.textbook_ai import (
+    generate_chapter_content_ai,
+    generate_chapter_outline_ai,
+)
 
 router = APIRouter(prefix="/api", tags=["textbooks"])
 LECTURER = require_roles(Role.LECTURER, Role.PROGRAM_MANAGER)
+
+
+def _course_clos(db: Session, course_id: int) -> list[Clo]:
+    outline = (
+        db.query(CourseOutline)
+        .filter(CourseOutline.course_id == course_id)
+        .order_by(CourseOutline.version.desc())
+        .first()
+    )
+    return db.query(Clo).filter(Clo.outline_id == outline.id).all() if outline else []
 
 
 @router.get("/courses/{course_id}/textbooks", response_model=list[TextbookOut])
@@ -112,3 +129,107 @@ def chapter_suggestions(course_id: int, db: Session = Depends(get_db), _: User =
     except Exception as e:  # noqa: BLE001
         raise HTTPException(400, f"Gợi ý thất bại: {e}")
     return {"suggestions": suggestions}
+
+
+# --------------------------- AI sinh giáo trình (SPEC 4.4) ---------------------------
+class GenTextbookIn(BaseModel):
+    title: str = ""
+    num_chapters: int = 0
+    with_content: bool = True  # sinh luôn nội dung từng chương hay chỉ dàn ý
+
+
+@router.post("/courses/{course_id}/textbooks/generate")
+def generate_textbook(
+    course_id: int, payload: GenTextbookIn, db: Session = Depends(get_db), user: User = Depends(LECTURER)
+):
+    """Sinh CẢ giáo trình bằng AI: tạo textbook + các chương (dàn ý, tùy chọn nội dung)."""
+    course = db.get(Course, course_id)
+    if not course:
+        raise HTTPException(404, "Không tìm thấy học phần")
+    clos = _course_clos(db, course_id)
+    if not clos:
+        raise HTTPException(400, "Học phần chưa có đề cương/CLO. Hãy tạo đề cương trước.")
+    clo_by_code = {c.code: c for c in clos}
+    clo_dicts = [{"code": c.code, "description": c.description} for c in clos]
+
+    try:
+        outline = generate_chapter_outline_ai(
+            {"code": course.code, "name": course.name}, clo_dicts, payload.num_chapters
+        )
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(400, f"Sinh giáo trình thất bại: {e}")
+
+    tb = Textbook(course_id=course_id, title=payload.title or f"Giáo trình {course.name}", version=1, status="draft")
+    db.add(tb)
+    db.flush()
+
+    for gc in outline.chapters:
+        content = ""
+        if payload.with_content:
+            ch_clos = [{"code": code, "description": clo_by_code[code].description}
+                       for code in gc.clo_codes if code in clo_by_code]
+            try:
+                content = generate_chapter_content_ai(
+                    {"code": course.code, "name": course.name}, gc.title, ch_clos, gc.summary
+                )
+            except Exception:  # noqa: BLE001
+                content = gc.summary or ""
+        ch = Chapter(textbook_id=tb.id, order=gc.order, title=gc.title, content_richtext=content)
+        db.add(ch)
+        db.flush()
+        for code in gc.clo_codes:
+            if code in clo_by_code:
+                db.add(ChapterClo(chapter_id=ch.id, clo_id=clo_by_code[code].id))
+
+    db.commit()
+    db.refresh(tb)
+    log_action(db, user.id, "textbook", tb.id, "generate_ai", {"chapters": len(outline.chapters)})
+    return {"textbook_id": tb.id, "chapters": len(outline.chapters)}
+
+
+@router.post("/chapters/{cid}/generate-content", response_model=ChapterOut)
+def generate_chapter_content(cid: int, db: Session = Depends(get_db), user: User = Depends(LECTURER)):
+    """Sinh/viết lại nội dung MỘT chương bằng AI (theo tiêu đề + CLO gắn của chương)."""
+    ch = db.get(Chapter, cid)
+    if not ch:
+        raise HTTPException(404, "Không tìm thấy chương")
+    tb = db.get(Textbook, ch.textbook_id)
+    course = db.get(Course, tb.course_id) if tb else None
+    clo_ids = [cc.clo_id for cc in db.query(ChapterClo).filter(ChapterClo.chapter_id == cid).all()]
+    clos = db.query(Clo).filter(Clo.id.in_(clo_ids or [-1])).all()
+    try:
+        content = generate_chapter_content_ai(
+            {"code": course.code if course else "", "name": course.name if course else ""},
+            ch.title,
+            [{"code": c.code, "description": c.description} for c in clos],
+        )
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(400, f"Sinh nội dung thất bại: {e}")
+    ch.content_richtext = content
+    db.commit()
+    db.refresh(ch)
+    log_action(db, user.id, "chapter", cid, "generate_content_ai")
+    res = ChapterOut.model_validate(ch)
+    res.clo_ids = clo_ids
+    return res
+
+
+# --------------------------- Xuất file giáo trình ---------------------------
+@router.get("/textbooks/{tid}/export")
+def export_textbook(tid: int, format: str = "docx", db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+    """Xuất giáo trình ra DOCX hoặc PDF (SPEC 4.4)."""
+    try:
+        if format == "pdf":
+            data = textbook_to_pdf(db, tid)
+            media = "application/pdf"
+            fname = f"giao_trinh_{tid}.pdf"
+        else:
+            data = textbook_to_docx(db, tid)
+            media = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            fname = f"giao_trinh_{tid}.docx"
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    return StreamingResponse(
+        iter([data]), media_type=media,
+        headers={"Content-Disposition": f"attachment; filename={fname}"},
+    )

@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { api, getToken } from "@/lib/api";
+import { api, API_BASE, getToken } from "@/lib/api";
 
 type Textbook = {
   id: number;
@@ -38,6 +38,9 @@ export default function TextbooksPage() {
 
   // Form tạo giáo trình mới
   const [newTitle, setNewTitle] = useState("");
+  const [genBusy, setGenBusy] = useState(false);
+  const [genMsg, setGenMsg] = useState("");
+  const [genNumChapters, setGenNumChapters] = useState<number>(0);
 
   // Form thêm/sửa chương
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -113,6 +116,59 @@ export default function TextbooksPage() {
     } catch (e: any) {
       setErr(e.message);
     }
+  }
+
+  // ----- AI sinh giáo trình -----
+  async function generateTextbookAI(withContent: boolean) {
+    setErr("");
+    setGenMsg("");
+    setGenBusy(true);
+    try {
+      const r = await api(`/api/courses/${id}/textbooks/generate`, {
+        method: "POST",
+        body: JSON.stringify({
+          title: newTitle.trim(),
+          num_chapters: genNumChapters,
+          with_content: withContent,
+        }),
+      });
+      setGenMsg(`Đã tạo giáo trình với ${r.chapters} chương. Hãy rà soát/chỉnh sửa.`);
+      setNewTitle("");
+      await loadTextbooks();
+      const tbs: Textbook[] = await api(`/api/courses/${id}/textbooks`);
+      const created = tbs.find((t) => t.id === r.textbook_id);
+      if (created) selectTextbook(created);
+    } catch (e: any) {
+      setErr(e.message);
+    } finally {
+      setGenBusy(false);
+    }
+  }
+
+  async function generateChapterContentAI(ch: Chapter) {
+    setErr("");
+    try {
+      await api(`/api/chapters/${ch.id}/generate-content`, { method: "POST" });
+      if (selected) await loadChapters(selected);
+    } catch (e: any) {
+      setErr(e.message);
+    }
+  }
+
+  function downloadTextbook(tb: Textbook, format: "docx" | "pdf") {
+    fetch(`${API_BASE}/api/textbooks/${tb.id}/export?format=${format}`, {
+      headers: { Authorization: `Bearer ${getToken()}` },
+    })
+      .then((res) => res.blob())
+      .then((blob) => {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `giao_trinh_${tb.id}.${format}`;
+        a.click();
+        URL.revokeObjectURL(url);
+      })
+      .catch((e) => setErr(String(e)));
   }
 
   function resetChapterForm() {
@@ -262,14 +318,67 @@ export default function TextbooksPage() {
             Tạo
           </button>
         </div>
+
+        {/* Tạo giáo trình bằng AI */}
+        <div className="mt-4 rounded-lg border border-green-200 bg-green-50/40 p-4">
+          <h3 className="text-sm font-semibold">✨ Tạo giáo trình bằng AI</h3>
+          <p className="mb-2 text-xs text-slate-600">
+            AI tạo cả giáo trình (các chương gắn CLO của đề cương). Dùng tiêu đề ở ô trên (nếu để trống sẽ tự đặt tên).
+          </p>
+          <div className="flex flex-wrap items-end gap-3">
+            <label className="text-sm">
+              Số chương
+              <input
+                type="number"
+                min={0}
+                max={30}
+                value={genNumChapters}
+                onChange={(e) => setGenNumChapters(Number(e.target.value) || 0)}
+                className="mt-1 block w-24 rounded border p-1"
+              />
+              <span className="block text-xs text-slate-400">(0 = AI tự quyết)</span>
+            </label>
+            <button
+              onClick={() => generateTextbookAI(true)}
+              disabled={genBusy}
+              className="rounded bg-green-600 px-4 py-2 text-sm text-white disabled:opacity-50"
+            >
+              {genBusy ? "AI đang soạn..." : "Tạo cả giáo trình (kèm nội dung)"}
+            </button>
+            <button
+              onClick={() => generateTextbookAI(false)}
+              disabled={genBusy}
+              className="rounded border border-green-600 px-4 py-2 text-sm text-green-700 disabled:opacity-50"
+            >
+              Chỉ tạo dàn ý chương
+            </button>
+          </div>
+          {genMsg && <p className="mt-2 text-sm text-green-700">{genMsg}</p>}
+        </div>
       </section>
 
       {/* Khi chọn 1 giáo trình */}
       {selected && (
         <section className="space-y-6">
-          <h2 className="text-lg font-semibold">
-            Chương của: {selected.title} (v{selected.version})
-          </h2>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-lg font-semibold">
+              Chương của: {selected.title} (v{selected.version})
+            </h2>
+            <div className="flex gap-2">
+              <button
+                onClick={() => downloadTextbook(selected, "docx")}
+                className="rounded bg-slate-100 px-3 py-1 text-sm hover:bg-slate-200"
+              >
+                Xuất DOCX
+              </button>
+              <button
+                onClick={() => downloadTextbook(selected, "pdf")}
+                className="rounded bg-slate-100 px-3 py-1 text-sm hover:bg-slate-200"
+              >
+                Xuất PDF
+              </button>
+            </div>
+          </div>
 
           {/* Gợi ý AI */}
           <div className="rounded border bg-white p-3">
@@ -338,7 +447,14 @@ export default function TextbooksPage() {
                       <td className="border p-1 text-xs">
                         {(ch.clo_ids || []).map((cid) => cloLabel(cid)).join(", ")}
                       </td>
-                      <td className="border p-1 text-center">
+                      <td className="border p-1 text-center whitespace-nowrap">
+                        <button
+                          onClick={() => generateChapterContentAI(ch)}
+                          className="mr-2 rounded bg-green-100 px-2 py-1 text-xs text-green-700 hover:bg-green-200"
+                          title="AI soạn/viết lại nội dung chương này"
+                        >
+                          ✨ AI nội dung
+                        </button>
                         <button
                           onClick={() => startEdit(ch)}
                           className="mr-2 rounded bg-slate-100 px-2 py-1 text-xs hover:bg-slate-200"
