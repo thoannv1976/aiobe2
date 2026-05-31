@@ -122,6 +122,9 @@ export default function CourseDetail() {
         <Link href={`/courses/${id}/textbooks`} className="rounded border border-indigo-600 px-3 py-1.5 text-indigo-700">
           Giáo trình →
         </Link>
+        <Link href={`/courses/${id}/lectures`} className="rounded border border-indigo-600 px-3 py-1.5 text-indigo-700">
+          Bài giảng →
+        </Link>
       </div>
 
       {/* Tài liệu tham chiếu cho AI sinh đề cương */}

@@ -15,7 +15,22 @@ export default function ProgramDetail() {
   const [matrix, setMatrix] = useState<any[]>([]);
   const [coverage, setCoverage] = useState<any>(null);
   const [report, setReport] = useState<any>(null);
+  const [ploReview, setPloReview] = useState<any>(null);
+  const [ploReviewBusy, setPloReviewBusy] = useState(false);
   const [err, setErr] = useState("");
+
+  async function reviewPlos() {
+    setErr("");
+    setPloReview(null);
+    setPloReviewBusy(true);
+    try {
+      setPloReview(await api(`/api/programs/${id}/review-plos`, { method: "POST" }));
+    } catch (e: any) {
+      setErr(e.message);
+    } finally {
+      setPloReviewBusy(false);
+    }
+  }
 
   async function load() {
     try {
@@ -88,7 +103,47 @@ export default function ProgramDetail() {
       )}
 
       <section className="mt-6">
-        <h2 className="mb-2 text-lg font-semibold">Chuẩn đầu ra (PLO) & Chỉ báo (PI)</h2>
+        <div className="mb-2 flex items-center justify-between">
+          <h2 className="text-lg font-semibold">Chuẩn đầu ra (PLO) & Chỉ báo (PI)</h2>
+          <button
+            onClick={reviewPlos}
+            disabled={ploReviewBusy}
+            className="rounded bg-green-600 px-3 py-1 text-sm text-white disabled:opacity-50"
+          >
+            {ploReviewBusy ? "AI đang rà soát..." : "✨ Chuẩn hóa PLO bằng AI"}
+          </button>
+        </div>
+        {ploReview && (
+          <div className="mb-3 rounded border border-indigo-300 bg-indigo-50 p-3 text-sm">
+            <b>Kết quả rà soát PLO (AI)</b>
+            {(ploReview.overall_issues || []).map((x: string) => (
+              <div key={x} className="text-amber-700">⚠ {x}</div>
+            ))}
+            <table className="mt-2 w-full border bg-white text-xs">
+              <thead>
+                <tr className="bg-slate-100">
+                  <th className="border p-1">PLO</th>
+                  <th className="border p-1">Đo được</th>
+                  <th className="border p-1">Bloom</th>
+                  <th className="border p-1 text-left">Vấn đề</th>
+                  <th className="border p-1 text-left">Gợi ý viết lại</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(ploReview.plos || []).map((r: any) => (
+                  <tr key={r.code}>
+                    <td className="border p-1 text-center">{r.code}</td>
+                    <td className="border p-1 text-center">{r.measurable ? "✓" : "✗"}</td>
+                    <td className="border p-1 text-center">{r.bloom_level}</td>
+                    <td className="border p-1">{(r.issues || []).join("; ") || "—"}</td>
+                    <td className="border p-1">{r.suggestion || "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="mt-1 text-xs text-slate-500">Gợi ý của AI — cần người duyệt xác nhận.</p>
+          </div>
+        )}
         <ul className="space-y-2">
           {plos.map((p) => (
             <li key={p.id} className="rounded border bg-white p-3 text-sm">

@@ -27,6 +27,8 @@ export default function OutlineEditor() {
 
   const [outline, setOutline] = useState<any>(null);
   const [alignment, setAlignment] = useState<any>(null);
+  const [qaResult, setQaResult] = useState<any>(null);
+  const [qaBusy, setQaBusy] = useState(false);
   const [clos, setClos] = useState<any[]>([]);
   const [cloPlo, setCloPlo] = useState<any[]>([]);
   const [plos, setPlos] = useState<any[]>([]);
@@ -145,6 +147,19 @@ export default function OutlineEditor() {
       if (created?.id) router.push(`/outlines/${created.id}`);
     } catch (e: any) {
       setErr(e.message);
+    }
+  }
+
+  async function qaReview() {
+    setErr("");
+    setQaResult(null);
+    setQaBusy(true);
+    try {
+      setQaResult(await api(`/api/outlines/${id}/qa-review`));
+    } catch (e: any) {
+      setErr(e.message);
+    } finally {
+      setQaBusy(false);
     }
   }
 
@@ -369,6 +384,13 @@ export default function OutlineEditor() {
           </h1>
           <div className="flex flex-wrap gap-2">
             <button
+              onClick={qaReview}
+              disabled={qaBusy}
+              className="rounded bg-green-600 px-4 py-2 text-white disabled:opacity-50"
+            >
+              {qaBusy ? "AI đang kiểm tra..." : "✨ Kiểm tra chất lượng (AI)"}
+            </button>
+            <button
               onClick={downloadDocx}
               className="rounded bg-slate-100 px-4 py-2 hover:bg-slate-200"
             >
@@ -415,6 +437,50 @@ export default function OutlineEditor() {
               ⚠ {w}
             </div>
           ))}
+        </section>
+      )}
+
+      {/* 2b. Kết quả kiểm tra chất lượng bằng AI */}
+      {qaResult && (
+        <section className="rounded border border-indigo-300 bg-indigo-50 p-4 text-sm shadow-sm">
+          <div className="mb-2 flex items-center justify-between">
+            <b>Kết quả kiểm tra chất lượng (AI)</b>
+            {typeof qaResult.score === "number" && (
+              <span className="rounded bg-indigo-600 px-2 py-1 text-white">
+                Điểm: {qaResult.score}/100
+              </span>
+            )}
+          </div>
+          {qaResult.summary && <p className="mb-2 italic text-slate-700">{qaResult.summary}</p>}
+          {(qaResult.errors || []).map((e: string) => (
+            <div key={e} className="text-red-700">✗ {e}</div>
+          ))}
+          {(qaResult.warnings || []).map((w: string) => (
+            <div key={w} className="text-amber-700">⚠ {w}</div>
+          ))}
+          {(qaResult.clo_reviews || []).length > 0 && (
+            <table className="mt-2 w-full border bg-white text-xs">
+              <thead>
+                <tr className="bg-slate-100">
+                  <th className="border p-1">CLO</th>
+                  <th className="border p-1">Đo được</th>
+                  <th className="border p-1 text-left">Vấn đề</th>
+                  <th className="border p-1 text-left">Gợi ý sửa</th>
+                </tr>
+              </thead>
+              <tbody>
+                {qaResult.clo_reviews.map((r: any) => (
+                  <tr key={r.code}>
+                    <td className="border p-1 text-center">{r.code}</td>
+                    <td className="border p-1 text-center">{r.measurable ? "✓" : "✗"}</td>
+                    <td className="border p-1">{(r.issues || []).join("; ") || "—"}</td>
+                    <td className="border p-1">{r.suggestion || "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          <p className="mt-2 text-xs text-slate-500">Gợi ý của AI — cần người duyệt xác nhận.</p>
         </section>
       )}
 
