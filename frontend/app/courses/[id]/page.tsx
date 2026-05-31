@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { api } from "@/lib/api";
+import { api, apiUpload } from "@/lib/api";
 
 export default function CourseDetail() {
   const { id } = useParams<{ id: string }>();
@@ -14,6 +14,11 @@ export default function CourseDetail() {
   const [exams, setExams] = useState<any[]>([]);
   const [blueprint, setBlueprint] = useState<any>(null);
   const [err, setErr] = useState("");
+  const [genBusy, setGenBusy] = useState(false);
+  const [templates, setTemplates] = useState<any[]>([]);
+  const [aunqaDocs, setAunqaDocs] = useState<any[]>([]);
+  const [templateId, setTemplateId] = useState<string>("");
+  const [aunqaId, setAunqaId] = useState<string>("");
 
   async function load() {
     try {
@@ -29,6 +34,13 @@ export default function CourseDetail() {
     } catch (e: any) {
       setErr(e.message);
     }
+    // Tài liệu tham chiếu load riêng (không chặn phần còn lại nếu thiếu quyền).
+    try {
+      setTemplates(await api(`/api/documents?type=outline_template`));
+      setAunqaDocs(await api(`/api/documents?type=aunqa_standard`));
+    } catch {
+      /* bỏ qua */
+    }
   }
   useEffect(() => {
     load();
@@ -42,6 +54,35 @@ export default function CourseDetail() {
         body: JSON.stringify({ course_id: Number(id), description: "", general_info_json: {}, teaching_methods_json: [], references_json: [] }),
       });
       window.location.href = `/outlines/${o.id}`;
+    } catch (e: any) {
+      setErr(e.message);
+    }
+  }
+
+  async function generateOutlineAI() {
+    setErr("");
+    setGenBusy(true);
+    try {
+      const qs = new URLSearchParams();
+      if (templateId) qs.set("template_doc_id", templateId);
+      if (aunqaId) qs.set("aunqa_doc_id", aunqaId);
+      const o = await api(`/api/courses/${id}/generate-outline?${qs.toString()}`, { method: "POST" });
+      window.location.href = `/outlines/${o.id}`;
+    } catch (e: any) {
+      setErr(e.message);
+    } finally {
+      setGenBusy(false);
+    }
+  }
+
+  async function uploadRef(file: File, docType: string) {
+    setErr("");
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("doc_type", docType);
+      await apiUpload(`/api/documents/upload`, fd);
+      await load();
     } catch (e: any) {
       setErr(e.message);
     }
@@ -75,16 +116,71 @@ export default function CourseDetail() {
         </Link>
       </div>
 
+      {/* Tài liệu tham chiếu cho AI sinh đề cương */}
+      <section className="rounded-lg border bg-indigo-50/40 p-4">
+        <h2 className="mb-2 text-lg font-semibold">Tài liệu tham chiếu (cho AI sinh đề cương)</h2>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div>
+            <p className="text-sm font-medium">Mẫu đề cương</p>
+            <input
+              type="file"
+              accept=".pdf,.docx,.txt"
+              className="mt-1 block w-full text-xs"
+              onChange={(e) => e.target.files?.[0] && uploadRef(e.target.files[0], "outline_template")}
+            />
+            <ul className="mt-1 text-xs text-slate-600">
+              {templates.map((d) => (
+                <li key={d.id}>• {d.original_name}</li>
+              ))}
+              {templates.length === 0 && <li className="text-slate-400">(Chưa có)</li>}
+            </ul>
+          </div>
+          <div>
+            <p className="text-sm font-medium">Tài liệu chuẩn AUN-QA</p>
+            <input
+              type="file"
+              accept=".pdf,.docx,.txt"
+              className="mt-1 block w-full text-xs"
+              onChange={(e) => e.target.files?.[0] && uploadRef(e.target.files[0], "aunqa_standard")}
+            />
+            <ul className="mt-1 text-xs text-slate-600">
+              {aunqaDocs.map((d) => (
+                <li key={d.id}>• {d.original_name}</li>
+              ))}
+              {aunqaDocs.length === 0 && <li className="text-slate-400">(Chưa có)</li>}
+            </ul>
+          </div>
+        </div>
+      </section>
+
       {/* Đề cương + alignment */}
       <section>
-        <div className="mb-2 flex items-center justify-between">
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-lg font-semibold">Đề cương & kiểm tra Alignment</h2>
-          <button
-            onClick={createOutline}
-            className="rounded bg-indigo-600 px-3 py-1 text-sm text-white"
-          >
-            + Tạo đề cương
-          </button>
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <select value={templateId} onChange={(e) => setTemplateId(e.target.value)} className="rounded border p-1">
+              <option value="">— Mẫu đề cương (tùy chọn) —</option>
+              {templates.map((d) => (
+                <option key={d.id} value={d.id}>{d.original_name}</option>
+              ))}
+            </select>
+            <select value={aunqaId} onChange={(e) => setAunqaId(e.target.value)} className="rounded border p-1">
+              <option value="">— Chuẩn AUN-QA (tùy chọn) —</option>
+              {aunqaDocs.map((d) => (
+                <option key={d.id} value={d.id}>{d.original_name}</option>
+              ))}
+            </select>
+            <button
+              onClick={generateOutlineAI}
+              disabled={genBusy}
+              className="rounded bg-green-600 px-3 py-1 text-white disabled:opacity-50"
+            >
+              {genBusy ? "AI đang soạn..." : "✨ Tạo đề cương bằng AI"}
+            </button>
+            <button onClick={createOutline} className="rounded bg-indigo-600 px-3 py-1 text-white">
+              + Tạo đề cương trống
+            </button>
+          </div>
         </div>
         {outlines.map((o) => {
           const a = alignment[o.id];

@@ -10,6 +10,7 @@ export default function ProgramDetail() {
   const { id } = useParams<{ id: string }>();
   const [program, setProgram] = useState<any>(null);
   const [plos, setPlos] = useState<any[]>([]);
+  const [pisByPlo, setPisByPlo] = useState<Record<number, any[]>>({});
   const [courses, setCourses] = useState<any[]>([]);
   const [matrix, setMatrix] = useState<any[]>([]);
   const [coverage, setCoverage] = useState<any>(null);
@@ -19,7 +20,14 @@ export default function ProgramDetail() {
   async function load() {
     try {
       setProgram(await api(`/api/programs/${id}`));
-      setPlos(await api(`/api/programs/${id}/plos`));
+      const ploList = await api(`/api/programs/${id}/plos`);
+      setPlos(ploList);
+      // Lấy PI của từng PLO để hiển thị dưới mỗi PLO.
+      const piMap: Record<number, any[]> = {};
+      for (const p of ploList) {
+        piMap[p.id] = await api(`/api/plos/${p.id}/pis`);
+      }
+      setPisByPlo(piMap);
       setCourses(await api(`/api/programs/${id}/courses`));
       setMatrix(await api(`/api/programs/${id}/course-plo`));
       setCoverage(await api(`/api/programs/${id}/coverage`));
@@ -80,12 +88,26 @@ export default function ProgramDetail() {
       )}
 
       <section className="mt-6">
-        <h2 className="mb-2 text-lg font-semibold">Chuẩn đầu ra (PLO)</h2>
-        <ul className="space-y-1">
+        <h2 className="mb-2 text-lg font-semibold">Chuẩn đầu ra (PLO) & Chỉ báo (PI)</h2>
+        <ul className="space-y-2">
           {plos.map((p) => (
-            <li key={p.id} className="rounded border bg-white p-2 text-sm">
-              <b>{p.code}</b> — {p.description}{" "}
-              <span className="text-slate-400">[{p.category}]</span>
+            <li key={p.id} className="rounded border bg-white p-3 text-sm">
+              <div>
+                <b>{p.code}</b> — {p.description}{" "}
+                <span className="text-slate-400">[{p.category}]</span>
+              </div>
+              {pisByPlo[p.id] && pisByPlo[p.id].length > 0 && (
+                <ul className="mt-2 space-y-1 border-l-2 border-indigo-100 pl-3">
+                  {pisByPlo[p.id].map((pi) => (
+                    <li key={pi.id} className="text-slate-600">
+                      <b className="text-indigo-700">{pi.code}</b> — {pi.description}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {(!pisByPlo[p.id] || pisByPlo[p.id].length === 0) && (
+                <p className="mt-1 text-xs text-slate-400">(Chưa có PI)</p>
+              )}
             </li>
           ))}
         </ul>
