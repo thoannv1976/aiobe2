@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { api, API_BASE, getToken } from "@/lib/api";
 
@@ -41,6 +41,8 @@ export default function TextbooksPage() {
   const [genBusy, setGenBusy] = useState(false);
   const [genMsg, setGenMsg] = useState("");
   const [genNumChapters, setGenNumChapters] = useState<number>(0);
+  const [chapterBusy, setChapterBusy] = useState<number | null>(null);
+  const [expandedChapter, setExpandedChapter] = useState<number | null>(null);
 
   // Form thêm/sửa chương
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -147,11 +149,17 @@ export default function TextbooksPage() {
 
   async function generateChapterContentAI(ch: Chapter) {
     setErr("");
+    setGenMsg("");
+    setChapterBusy(ch.id);
     try {
       await api(`/api/chapters/${ch.id}/generate-content`, { method: "POST" });
       if (selected) await loadChapters(selected);
+      setExpandedChapter(ch.id);
+      setGenMsg(`Đã soạn nội dung cho chương "${ch.title}". Xem bên dưới / chỉnh sửa nếu cần.`);
     } catch (e: any) {
       setErr(e.message);
+    } finally {
+      setChapterBusy(null);
     }
   }
 
@@ -440,36 +448,71 @@ export default function TextbooksPage() {
                 {chapters
                   .slice()
                   .sort((a, b) => a.order - b.order)
-                  .map((ch) => (
-                    <tr key={ch.id}>
-                      <td className="border p-1 text-center">{ch.order}</td>
-                      <td className="border p-1">{ch.title}</td>
-                      <td className="border p-1 text-xs">
-                        {(ch.clo_ids || []).map((cid) => cloLabel(cid)).join(", ")}
-                      </td>
-                      <td className="border p-1 text-center whitespace-nowrap">
-                        <button
-                          onClick={() => generateChapterContentAI(ch)}
-                          className="mr-2 rounded bg-green-100 px-2 py-1 text-xs text-green-700 hover:bg-green-200"
-                          title="AI soạn/viết lại nội dung chương này"
-                        >
-                          ✨ AI nội dung
-                        </button>
-                        <button
-                          onClick={() => startEdit(ch)}
-                          className="mr-2 rounded bg-slate-100 px-2 py-1 text-xs hover:bg-slate-200"
-                        >
-                          Sửa
-                        </button>
-                        <button
-                          onClick={() => deleteChapter(ch)}
-                          className="rounded bg-red-100 px-2 py-1 text-xs text-red-700 hover:bg-red-200"
-                        >
-                          Xóa
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                  .map((ch) => {
+                    const hasContent = !!(ch.content_richtext && ch.content_richtext.trim());
+                    const busy = chapterBusy === ch.id;
+                    return (
+                      <Fragment key={ch.id}>
+                        <tr>
+                          <td className="border p-1 text-center">{ch.order}</td>
+                          <td className="border p-1">
+                            {ch.title}
+                            <span className="ml-2 text-xs">
+                              {hasContent ? (
+                                <span className="text-green-600">● có nội dung</span>
+                              ) : (
+                                <span className="text-slate-400">○ trống</span>
+                              )}
+                            </span>
+                          </td>
+                          <td className="border p-1 text-xs">
+                            {(ch.clo_ids || []).map((cid) => cloLabel(cid)).join(", ")}
+                          </td>
+                          <td className="border p-1 text-center whitespace-nowrap">
+                            <button
+                              onClick={() => generateChapterContentAI(ch)}
+                              disabled={busy}
+                              className="mr-2 rounded bg-green-100 px-2 py-1 text-xs text-green-700 hover:bg-green-200 disabled:opacity-50"
+                              title="AI soạn/viết lại nội dung chương này"
+                            >
+                              {busy ? "⏳ Đang soạn..." : hasContent ? "✨ Viết lại" : "✨ AI nội dung"}
+                            </button>
+                            {hasContent && (
+                              <button
+                                onClick={() =>
+                                  setExpandedChapter(expandedChapter === ch.id ? null : ch.id)
+                                }
+                                className="mr-2 rounded bg-indigo-100 px-2 py-1 text-xs text-indigo-700 hover:bg-indigo-200"
+                              >
+                                {expandedChapter === ch.id ? "Ẩn" : "Xem"}
+                              </button>
+                            )}
+                            <button
+                              onClick={() => startEdit(ch)}
+                              className="mr-2 rounded bg-slate-100 px-2 py-1 text-xs hover:bg-slate-200"
+                            >
+                              Sửa
+                            </button>
+                            <button
+                              onClick={() => deleteChapter(ch)}
+                              className="rounded bg-red-100 px-2 py-1 text-xs text-red-700 hover:bg-red-200"
+                            >
+                              Xóa
+                            </button>
+                          </td>
+                        </tr>
+                        {expandedChapter === ch.id && hasContent && (
+                          <tr>
+                            <td colSpan={4} className="border bg-slate-50 p-3">
+                              <pre className="max-h-96 overflow-auto whitespace-pre-wrap font-sans text-xs text-slate-700">
+                                {ch.content_richtext}
+                              </pre>
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    );
+                  })}
                 {chapters.length === 0 && (
                   <tr>
                     <td colSpan={4} className="border p-2 text-center text-slate-500">
