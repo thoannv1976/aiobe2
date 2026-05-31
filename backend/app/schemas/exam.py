@@ -58,6 +58,8 @@ class ExamGenerateIn(BaseModel):
     duration_min: int = 90
     variant_count: int = 1
     seed: int | None = None
+    # Cho phép sinh đề với số câu bốc được khi ngân hàng thiếu (best-effort).
+    allow_partial: bool = False
 
 
 class ExamOut(BaseModel):

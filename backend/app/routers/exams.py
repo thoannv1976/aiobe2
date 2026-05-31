@@ -37,8 +37,35 @@ def generate(payload: ExamGenerateIn, db: Session = Depends(get_db), user: User 
         .all()
     ]
     res = generate_exam_pure(matrix.cells_json, questions, seed=payload.seed)
-    if not res.ok:
-        raise HTTPException(400, {"message": "Không sinh đủ đề", "errors": res.errors, "by_cell": res.by_cell})
+    if not res.ok and not payload.allow_partial:
+        # Lập thông báo tiếng Việt dễ đọc, dùng mã CLO thay vì id.
+        from app.models import Clo
+
+        clo_codes = {
+            c.id: c.code
+            for c in db.query(Clo).filter(Clo.id.in_([cell.get("clo_id") for cell in res.by_cell] or [-1])).all()
+        }
+        bloom_vi = {
+            "remember": "Nhớ", "understand": "Hiểu", "apply": "Vận dụng",
+            "analyze": "Phân tích", "evaluate": "Đánh giá", "create": "Sáng tạo",
+        }
+        diff_vi = {"easy": "Dễ", "medium": "Trung bình", "hard": "Khó"}
+        missing = []
+        for c in res.by_cell:
+            if c["picked"] < c["required"]:
+                code = clo_codes.get(c["clo_id"], f"CLO#{c['clo_id']}")
+                missing.append(
+                    f"• {code} · {bloom_vi.get(c['bloom_level'], c['bloom_level'])} · "
+                    f"{diff_vi.get(c['difficulty'], c['difficulty'])}: cần {c['required']} câu, "
+                    f"ngân hàng chỉ có {c['picked']} câu."
+                )
+        detail = (
+            "Ngân hàng câu hỏi chưa đủ để sinh đề theo ma trận này:\n"
+            + "\n".join(missing)
+            + "\n\nKhắc phục: bổ sung câu hỏi cho các ô trên (có thể dùng \"Tạo câu hỏi bằng AI\" "
+            "ở Ngân hàng câu hỏi), hoặc chọn \"Vẫn sinh đề với câu có sẵn\"."
+        )
+        raise HTTPException(400, detail)
 
     exam = Exam(
         course_id=matrix.course_id, matrix_id=matrix.id, name=payload.name,

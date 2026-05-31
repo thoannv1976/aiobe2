@@ -14,6 +14,7 @@ export default function CourseDetail() {
   const [exams, setExams] = useState<any[]>([]);
   const [blueprint, setBlueprint] = useState<any>(null);
   const [err, setErr] = useState("");
+  const [genExamErr, setGenExamErr] = useState<{ matrixId: number; message: string } | null>(null);
   const [genBusy, setGenBusy] = useState(false);
   const [templates, setTemplates] = useState<any[]>([]);
   const [aunqaDocs, setAunqaDocs] = useState<any[]>([]);
@@ -96,16 +97,23 @@ export default function CourseDetail() {
     }
   }
 
-  async function generate(matrixId: number) {
+  async function generate(matrixId: number, allowPartial = false) {
     setErr("");
+    setGenExamErr(null);
     try {
       await api(`/api/exams/generate`, {
         method: "POST",
-        body: JSON.stringify({ matrix_id: matrixId, name: "Đề thi", seed: 1 }),
+        body: JSON.stringify({
+          matrix_id: matrixId,
+          name: "Đề thi",
+          seed: 1,
+          allow_partial: allowPartial,
+        }),
       });
       setExams(await api(`/api/courses/${id}/exams`));
     } catch (e: any) {
-      setErr(e.message);
+      // Hiển thị lỗi ngay tại ma trận + cho phép sinh một phần.
+      setGenExamErr({ matrixId, message: e.message });
     }
   }
 
@@ -291,6 +299,17 @@ export default function CourseDetail() {
                 Sinh đề
               </button>
             </div>
+            {genExamErr && genExamErr.matrixId === m.id && (
+              <div className="my-2 rounded border border-red-300 bg-red-50 p-3 text-sm">
+                <p className="whitespace-pre-line text-red-700">{genExamErr.message}</p>
+                <button
+                  onClick={() => generate(m.id, true)}
+                  className="mt-2 rounded bg-amber-600 px-3 py-1 text-xs text-white hover:bg-amber-700"
+                >
+                  Vẫn sinh đề với câu có sẵn
+                </button>
+              </div>
+            )}
             <table className="mt-2 w-full text-xs">
               <thead>
                 <tr className="bg-slate-100">
