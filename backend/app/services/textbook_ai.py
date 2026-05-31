@@ -1,16 +1,13 @@
 """Sinh giáo trình bằng AI gắn với CLO của đề cương (SPEC 4.4).
 
-Hai chế độ:
-- generate_chapter_outline_ai: đề xuất danh sách chương (tiêu đề + CLO) phủ hết CLO.
-- generate_chapter_content_ai: soạn nội dung chi tiết một chương.
-Output validate Pydantic. Cần người duyệt trước khi ban hành.
+Gọi LLM qua lớp thống nhất app.services.llm (Claude/OpenAI tùy key admin cấu hình).
 """
 from __future__ import annotations
 
 import json
 
-from app.config import settings
 from app.schemas.textbook_gen import GeneratedChapterOutline
+from app.services.llm import llm_complete
 
 
 def _strip_to_json(text: str) -> str:
@@ -21,14 +18,6 @@ def _strip_to_json(text: str) -> str:
             t = t[4:]
     start, end = t.find("{"), t.rfind("}")
     return t[start : end + 1] if start != -1 and end != -1 else t
-
-
-def _client():
-    if not settings.anthropic_api_key:
-        raise RuntimeError("Chưa cấu hình ANTHROPIC_API_KEY.")
-    import anthropic
-
-    return anthropic.Anthropic(api_key=settings.anthropic_api_key)
 
 
 OUTLINE_PROMPT = """Bạn là chuyên gia biên soạn giáo trình đại học theo chuẩn OBE. \
@@ -50,7 +39,6 @@ def generate_chapter_outline_ai(
     """Sinh dàn ý chương giáo trình."""
     if not clos:
         raise ValueError("Học phần chưa có CLO để sinh giáo trình.")
-    client = _client()
     clo_lines = "\n".join(f"- {c['code']}: {c['description']}" for c in clos)
     n_txt = f"khoảng {num_chapters} chương" if num_chapters else "số chương hợp lý"
     user = (
@@ -58,13 +46,7 @@ def generate_chapter_outline_ai(
         f"CÁC CLO:\n{clo_lines}\n\n"
         f"Đề xuất {n_txt} cho giáo trình, phủ hết các CLO trên."
     )
-    msg = client.messages.create(
-        model=settings.anthropic_model,
-        max_tokens=4000,
-        system=OUTLINE_PROMPT,
-        messages=[{"role": "user", "content": user}],
-    )
-    raw = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
+    raw = llm_complete(OUTLINE_PROMPT, user, max_tokens=4000)
     data = json.loads(_strip_to_json(raw))
     return GeneratedChapterOutline.model_validate(data)
 
@@ -82,7 +64,6 @@ def generate_chapter_content_ai(
     course: dict, chapter_title: str, clos: list[dict], chapter_summary: str = ""
 ) -> str:
     """Soạn nội dung Markdown một chương (NGẮN — 1 lần gọi, ~10-12 trang)."""
-    client = _client()
     clo_lines = "\n".join(f"- {c['code']}: {c['description']}" for c in clos) or "(không có)"
     user = (
         f"HỌC PHẦN: {course.get('code','')} — {course.get('name','')}.\n"
@@ -91,14 +72,7 @@ def generate_chapter_content_ai(
         + (f"Gợi ý nội dung: {chapter_summary}\n" if chapter_summary else "")
         + "\nHãy soạn nội dung chi tiết cho chương này."
     )
-    msg = client.messages.create(
-        model=settings.anthropic_model,
-        max_tokens=8000,
-        system=CONTENT_PROMPT,
-        messages=[{"role": "user", "content": user}],
-    )
-    raw = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
-    return raw.strip()
+    return llm_complete(CONTENT_PROMPT, user, max_tokens=8000).strip()
 
 
 # --- Sinh SÂU: chương dài 25-40 trang bằng cách viết từng mục rồi ghép ---
@@ -112,7 +86,7 @@ bảng/sơ đồ mô tả bằng lời nếu cần. Định dạng Markdown (b�
 Viết dài, sâu. Chỉ trả về nội dung mục (Markdown thuần), KHÔNG kèm lời dẫn."""
 
 
-def _chapter_section_outline(client, course: dict, chapter_title: str, clos: list[dict],
+def _chapter_section_outline(course: dict, chapter_title: str, clos: list[dict],
                              summary: str, target_pages: int, max_sections: int) -> list[dict]:
     clo_lines = "\n".join(f"- {c['code']}: {c['description']}" for c in clos) or "(không có)"
     user = (
@@ -122,11 +96,7 @@ def _chapter_section_outline(client, course: dict, chapter_title: str, clos: lis
         + f"\nMục tiêu độ dài chương: khoảng {target_pages} trang A4. "
         f"Hãy chia thành {max_sections} mục lớn, cân đối."
     )
-    msg = client.messages.create(
-        model=settings.anthropic_model, max_tokens=2000,
-        system=SECTION_OUTLINE_PROMPT, messages=[{"role": "user", "content": user}],
-    )
-    raw = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
+    raw = llm_complete(SECTION_OUTLINE_PROMPT, user, max_tokens=2000)
     data = json.loads(_strip_to_json(raw))
     secs = data.get("sections", []) if isinstance(data, dict) else []
     return secs[:max_sections]
@@ -140,12 +110,11 @@ def generate_chapter_content_deep_ai(
 
     Mỗi mục là một lần gọi LLM (bounded), nên tổng chương dài vẫn an toàn về token.
     """
-    client = _client()
     # Ước lượng số mục: ~6-7 trang/mục.
     max_sections = max(3, min(8, round(target_pages / 6)))
     try:
         sections = _chapter_section_outline(
-            client, course, chapter_title, clos, chapter_summary, target_pages, max_sections
+            course, chapter_title, clos, chapter_summary, target_pages, max_sections
         )
     except Exception:  # noqa: BLE001
         sections = []
@@ -163,11 +132,7 @@ def generate_chapter_content_deep_ai(
             f"Các ý cần trình bày: {sec.get('points','')}\n"
             "\nHãy viết nội dung chi tiết, sâu cho MỤC này."
         )
-        msg = client.messages.create(
-            model=settings.anthropic_model, max_tokens=8000,
-            system=SECTION_CONTENT_PROMPT, messages=[{"role": "user", "content": user}],
-        )
-        txt = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text").strip()
+        txt = llm_complete(SECTION_CONTENT_PROMPT, user, max_tokens=8000).strip()
         if txt:
             parts.append(txt)
     return "\n\n".join(parts)

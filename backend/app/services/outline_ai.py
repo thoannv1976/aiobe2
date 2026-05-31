@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import json
 
-from app.config import settings
 from app.schemas.outline_gen import GeneratedOutline
+from app.services.llm import llm_complete
 
 OUTLINE_SYSTEM_PROMPT = """Bạn là chuyên gia thiết kế chương trình đào tạo theo chuẩn OBE \
 (Outcome-Based Education) và kiểm định AUN-QA. Nhiệm vụ: soạn ĐỀ CƯƠNG HỌC PHẦN tiếng Việt \
@@ -105,12 +105,6 @@ def generate_outline_ai(
     Tham số tinh chỉnh (theo quy định trường): số CLO, số tuần, cơ cấu đánh giá,
     CLO song ngữ Việt(Anh) hay chỉ tiếng Việt.
     """
-    if not settings.anthropic_api_key:
-        raise RuntimeError("Chưa cấu hình ANTHROPIC_API_KEY.")
-    import anthropic
-
-    client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
-
     plo_lines = "\n".join(f"- {p['code']} [{p.get('category','')}]: {p['description']}" for p in plos)
     pi_lines = "\n".join(f"- {pi['code']} (thuộc {pi['plo_code']}): {pi['description']}" for pi in pis)
     cp_lines = "\n".join(f"- {cp['plo_code']}: mức {cp['level']}" for cp in course_plo) or "(chưa có)"
@@ -133,12 +127,10 @@ def generate_outline_ai(
     )
     user_content = "\n".join(p for p in parts if p)
 
-    msg = client.messages.create(
-        model=settings.anthropic_model,
+    raw = llm_complete(
+        build_system_prompt(num_clos, num_weeks, assessment_scheme, bilingual),
+        user_content,
         max_tokens=12000,  # rubric + bản dịch EN làm output dài hơn
-        system=build_system_prompt(num_clos, num_weeks, assessment_scheme, bilingual),
-        messages=[{"role": "user", "content": user_content}],
     )
-    raw = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
     data = json.loads(_strip_to_json(raw))
     return GeneratedOutline.model_validate(data)

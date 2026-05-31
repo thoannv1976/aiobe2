@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import json
 
-from app.config import settings
 from app.schemas.extraction import ExtractionPayload
+from app.services.llm import llm_complete
 
 EXTRACTION_SYSTEM_PROMPT = """Bạn là trợ lý trích xuất dữ liệu học thuật từ đề án mở ngành/CTĐT \
 tiếng Việt theo chuẩn OBE. Hãy đọc văn bản và trả về DUY NHẤT một đối tượng JSON hợp lệ \
@@ -126,11 +126,6 @@ def suggest_chapter_outline(clos: list[dict], course_name: str) -> list[dict]:
 
     Trả về [{title, clo_codes:[...]}]. Validate dạng list[dict] trước khi dùng.
     """
-    if not settings.anthropic_api_key:
-        raise RuntimeError("Chưa cấu hình ANTHROPIC_API_KEY.")
-    import anthropic
-
-    client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
     clo_text = "\n".join(f"- {c['code']}: {c['description']}" for c in clos)
     prompt = (
         f"Học phần: {course_name}\nCác CLO:\n{clo_text}\n\n"
@@ -138,12 +133,7 @@ def suggest_chapter_outline(clos: list[dict], course_name: str) -> list[dict]:
         "Trả về DUY NHẤT JSON dạng: "
         '[{"title":"","clo_codes":["CLO1"]}] — không kèm văn bản thừa.'
     )
-    msg = client.messages.create(
-        model=settings.anthropic_model,
-        max_tokens=2000,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    raw = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
+    raw = llm_complete("Bạn là trợ lý biên soạn giáo trình.", prompt, max_tokens=2000)
     txt = raw.strip()
     if txt.startswith("```"):
         txt = txt.split("```", 2)[1]
@@ -209,22 +199,9 @@ def _repair_truncated_json(text: str) -> str:
 
 
 def call_llm_extract(text: str) -> ExtractionPayload:
-    """Gọi Claude trích xuất; validate bằng Pydantic. Không có API key -> lỗi rõ ràng."""
-    if not settings.anthropic_api_key:
-        raise RuntimeError(
-            "Chưa cấu hình ANTHROPIC_API_KEY. Đặt biến môi trường để dùng trích xuất AI."
-        )
-    import anthropic
-
-    client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+    """Gọi LLM trích xuất; validate bằng Pydantic. Chưa cấu hình AI -> lỗi rõ ràng."""
     chunk = text[:MAX_INPUT_CHARS]
-    msg = client.messages.create(
-        model=settings.anthropic_model,
-        max_tokens=MAX_OUTPUT_TOKENS,
-        system=EXTRACTION_SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": chunk}],
-    )
-    raw = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
+    raw = llm_complete(EXTRACTION_SYSTEM_PROMPT, chunk, max_tokens=MAX_OUTPUT_TOKENS)
     try:
         data = json.loads(_strip_to_json(raw))
     except json.JSONDecodeError:

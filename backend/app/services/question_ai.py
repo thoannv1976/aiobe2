@@ -6,8 +6,8 @@ from __future__ import annotations
 
 import json
 
-from app.config import settings
 from app.schemas.question_gen import GeneratedQuestions
+from app.services.llm import llm_complete
 
 QUESTION_SYSTEM_PROMPT = """Bạn là chuyên gia khảo thí theo chuẩn OBE. Nhiệm vụ: soạn CÂU HỎI \
 cho ngân hàng đề thi của một học phần, bám sát CHUẨN ĐẦU RA HỌC PHẦN (CLO) và mức nhận thức Bloom.
@@ -62,13 +62,8 @@ def generate_questions_ai(
     clo_materials: nội dung các chương giáo trình gắn với từng CLO, dùng làm ngữ liệu
     để câu hỏi bám sát giáo trình thực tế (SPEC 4.4/4.5).
     """
-    if not settings.anthropic_api_key:
-        raise RuntimeError("Chưa cấu hình ANTHROPIC_API_KEY.")
     if not clos:
         raise ValueError("Học phần chưa có CLO để sinh câu hỏi.")
-    import anthropic
-
-    client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
     materials = clo_materials or {}
     clo_blocks = []
     for c in clos:
@@ -98,12 +93,6 @@ def generate_questions_ai(
         + "Phân bổ đều, tránh trùng lặp nội dung."
     )
 
-    msg = client.messages.create(
-        model=settings.anthropic_model,
-        max_tokens=12000,
-        system=QUESTION_SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": user_content}],
-    )
-    raw = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
+    raw = llm_complete(QUESTION_SYSTEM_PROMPT, user_content, max_tokens=12000)
     data = json.loads(_strip_to_json(raw))
     return GeneratedQuestions.model_validate(data)

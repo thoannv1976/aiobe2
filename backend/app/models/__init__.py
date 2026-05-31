@@ -13,6 +13,7 @@ from app.models.enums import (  # noqa: F401
     Role,
 )
 from app.models.tables import (  # noqa: F401
+    ApiKey,
     Assessment,
     AssessmentClo,
     Assignment,

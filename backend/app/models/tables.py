@@ -412,3 +412,22 @@ class AuditLog(Base):
     action: Mapped[str] = mapped_column(String(100))
     diff_json: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
+
+
+class ApiKey(Base):
+    """Khóa API AI do admin cấu hình, dùng chung cho toàn hệ thống (SPEC vận hành).
+
+    provider: 'anthropic' (Claude) hoặc 'openai'. Chỉ một khóa active tại một thời điểm.
+    """
+    __tablename__ = "api_keys"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    provider: Mapped[str] = mapped_column(String(50))  # anthropic | openai
+    name: Mapped[str] = mapped_column(String(255), default="")
+    api_key: Mapped[str] = mapped_column(String(500))
+    model: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
+

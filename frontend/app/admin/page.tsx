@@ -194,7 +194,12 @@ export default function AdminPage() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold">Quản trị người dùng &amp; phân công</h1>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h1 className="text-2xl font-bold">Quản trị người dùng &amp; phân công</h1>
+        <a href="/admin/ai" className="rounded bg-indigo-600 px-3 py-2 text-sm text-white">
+          ⚙ Cấu hình API AI
+        </a>
+      </div>
 
       {/* Section: Người dùng */}
       <div className="mt-4 rounded border bg-white p-4 shadow-sm">
