@@ -12,6 +12,7 @@ from app.services.exports import textbook_to_docx, textbook_to_pdf
 from app.services.extraction import suggest_chapter_outline
 from app.services.textbook_ai import (
     generate_chapter_content_ai,
+    generate_chapter_content_deep_ai,
     generate_chapter_outline_ai,
 )
 
@@ -188,8 +189,18 @@ def generate_textbook(
 
 
 @router.post("/chapters/{cid}/generate-content", response_model=ChapterOut)
-def generate_chapter_content(cid: int, db: Session = Depends(get_db), user: User = Depends(LECTURER)):
-    """Sinh/viết lại nội dung MỘT chương bằng AI (theo tiêu đề + CLO gắn của chương)."""
+def generate_chapter_content(
+    cid: int,
+    deep: bool = False,
+    target_pages: int = 30,
+    db: Session = Depends(get_db),
+    user: User = Depends(LECTURER),
+):
+    """Sinh/viết lại nội dung MỘT chương bằng AI (theo tiêu đề + CLO gắn của chương).
+
+    deep=true: sinh chương DÀI (~25-40 trang) bằng cách viết từng mục rồi ghép —
+    có thể mất vài phút (cần Cloud Run timeout cao). deep=false: bản nhanh ~10-12 trang.
+    """
     ch = db.get(Chapter, cid)
     if not ch:
         raise HTTPException(404, "Không tìm thấy chương")
@@ -197,12 +208,15 @@ def generate_chapter_content(cid: int, db: Session = Depends(get_db), user: User
     course = db.get(Course, tb.course_id) if tb else None
     clo_ids = [cc.clo_id for cc in db.query(ChapterClo).filter(ChapterClo.chapter_id == cid).all()]
     clos = db.query(Clo).filter(Clo.id.in_(clo_ids or [-1])).all()
+    course_d = {"code": course.code if course else "", "name": course.name if course else ""}
+    clo_d = [{"code": c.code, "description": c.description} for c in clos]
     try:
-        content = generate_chapter_content_ai(
-            {"code": course.code if course else "", "name": course.name if course else ""},
-            ch.title,
-            [{"code": c.code, "description": c.description} for c in clos],
-        )
+        if deep:
+            content = generate_chapter_content_deep_ai(
+                course_d, ch.title, clo_d, ch.content_richtext or "", target_pages=target_pages
+            )
+        else:
+            content = generate_chapter_content_ai(course_d, ch.title, clo_d)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(400, f"Sinh nội dung thất bại: {e}")
     ch.content_richtext = content

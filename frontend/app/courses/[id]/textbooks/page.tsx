@@ -41,6 +41,7 @@ export default function TextbooksPage() {
   const [genBusy, setGenBusy] = useState(false);
   const [genMsg, setGenMsg] = useState("");
   const [genNumChapters, setGenNumChapters] = useState<number>(0);
+  const [deepPages, setDeepPages] = useState<number>(30);
   const [chapterBusy, setChapterBusy] = useState<number | null>(null);
   const [expandedChapter, setExpandedChapter] = useState<number | null>(null);
 
@@ -121,25 +122,56 @@ export default function TextbooksPage() {
   }
 
   // ----- AI sinh giáo trình -----
+  // withContent=false: chỉ tạo dàn ý chương (nhanh).
+  // withContent=true: tạo dàn ý rồi SINH SÂU từng chương tuần tự (resumable, có tiến độ).
   async function generateTextbookAI(withContent: boolean) {
     setErr("");
     setGenMsg("");
     setGenBusy(true);
     try {
+      // Bước 1: luôn tạo dàn ý + chương rỗng trước (nhanh, không timeout).
+      setGenMsg("Đang lập dàn ý các chương...");
       const r = await api(`/api/courses/${id}/textbooks/generate`, {
         method: "POST",
         body: JSON.stringify({
           title: newTitle.trim(),
           num_chapters: genNumChapters,
-          with_content: withContent,
+          with_content: false,
         }),
       });
-      setGenMsg(`Đã tạo giáo trình với ${r.chapters} chương. Hãy rà soát/chỉnh sửa.`);
       setNewTitle("");
       await loadTextbooks();
       const tbs: Textbook[] = await api(`/api/courses/${id}/textbooks`);
       const created = tbs.find((t) => t.id === r.textbook_id);
       if (created) selectTextbook(created);
+
+      if (!withContent) {
+        setGenMsg(`Đã tạo dàn ý ${r.chapters} chương. Bấm "AI nội dung" ở từng chương để soạn.`);
+        return;
+      }
+
+      // Bước 2: sinh SÂU từng chương tuần tự — mỗi chương lưu ngay, lỗi 1 chương không mất các chương khác.
+      const chs: Chapter[] = await api(`/api/textbooks/${r.textbook_id}/chapters`);
+      const sorted = chs.slice().sort((a, b) => a.order - b.order);
+      let ok = 0;
+      const failed: number[] = [];
+      for (let i = 0; i < sorted.length; i++) {
+        const ch = sorted[i];
+        setGenMsg(`Đang soạn nội dung chương ${i + 1}/${sorted.length}: "${ch.title}"... (có thể mất vài phút mỗi chương)`);
+        try {
+          await api(`/api/chapters/${ch.id}/generate-content?deep=true&target_pages=${deepPages}`, {
+            method: "POST",
+          });
+          ok++;
+        } catch {
+          failed.push(ch.order);
+        }
+        if (created) await loadChapters(created);
+      }
+      setGenMsg(
+        `Hoàn tất: ${ok}/${sorted.length} chương đã có nội dung` +
+          (failed.length ? `. Chương lỗi: ${failed.join(", ")} — bấm "AI nội dung" để soạn lại.` : ".")
+      );
     } catch (e: any) {
       setErr(e.message);
     } finally {
@@ -152,7 +184,9 @@ export default function TextbooksPage() {
     setGenMsg("");
     setChapterBusy(ch.id);
     try {
-      await api(`/api/chapters/${ch.id}/generate-content`, { method: "POST" });
+      await api(`/api/chapters/${ch.id}/generate-content?deep=true&target_pages=${deepPages}`, {
+        method: "POST",
+      });
       if (selected) await loadChapters(selected);
       setExpandedChapter(ch.id);
       setGenMsg(`Đã soạn nội dung cho chương "${ch.title}". Xem bên dưới / chỉnh sửa nếu cần.`);
