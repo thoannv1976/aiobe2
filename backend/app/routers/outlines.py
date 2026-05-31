@@ -176,7 +176,10 @@ def generate_outline(
 
     clo_by_code: dict[str, Clo] = {}
     for gc in gen.clos:
-        clo = Clo(outline_id=outline.id, code=gc.code, description=gc.description, bloom_level=gc.bloom_level or None)
+        clo = Clo(
+            outline_id=outline.id, code=gc.code, description=gc.description,
+            description_en=gc.description_en or None, bloom_level=gc.bloom_level or None,
+        )
         db.add(clo)
         db.flush()
         clo_by_code[gc.code] = clo
@@ -186,7 +189,11 @@ def generate_outline(
                 db.add(CloPlo(clo_id=clo.id, plo_id=plo.id, contribution_level=cp.level or "R"))
 
     for ga in gen.assessments:
-        a = Assessment(outline_id=outline.id, name=ga.name, type=ga.type or None, weight_percent=ga.weight_percent)
+        a = Assessment(
+            outline_id=outline.id, name=ga.name, type=ga.type or None,
+            weight_percent=ga.weight_percent,
+            rubric_json={"criteria": [c.model_dump() for c in ga.rubric]} if ga.rubric else {},
+        )
         db.add(a)
         db.flush()
         for code in ga.clo_codes:

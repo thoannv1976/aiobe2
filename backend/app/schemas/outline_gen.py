@@ -14,9 +14,17 @@ class GenCloPlo(BaseModel):
 
 class GenClo(BaseModel):
     code: str
-    description: str
+    description: str  # tiếng Việt
+    description_en: str = ""  # bản dịch tiếng Anh đầy đủ (song ngữ AUN-QA)
     bloom_level: str = ""
     plos: list[GenCloPlo] = Field(default_factory=list)
+
+
+class GenRubricCriterion(BaseModel):
+    """Một tiêu chí trong rubric chấm điểm."""
+    name: str  # tên tiêu chí
+    weight_percent: float = 0  # trọng số trong cấu phần
+    levels: list[str] = Field(default_factory=list)  # mô tả các mức (giỏi→kém)
 
 
 class GenAssessment(BaseModel):
@@ -24,6 +32,7 @@ class GenAssessment(BaseModel):
     type: str = ""
     weight_percent: float = 0
     clo_codes: list[str] = Field(default_factory=list)
+    rubric: list[GenRubricCriterion] = Field(default_factory=list)
 
 
 class GenLesson(BaseModel):

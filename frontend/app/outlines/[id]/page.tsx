@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { api, API_BASE, getToken } from "@/lib/api";
 
@@ -435,7 +435,12 @@ export default function OutlineEditor() {
               {clos.map((c) => (
                 <tr key={c.id}>
                   <td className="border p-2 text-center">{c.code}</td>
-                  <td className="border p-2">{c.description}</td>
+                  <td className="border p-2">
+                    {c.description}
+                    {c.description_en && (
+                      <div className="mt-1 text-xs italic text-slate-500">{c.description_en}</div>
+                    )}
+                  </td>
                   <td className="border p-2 text-center">{c.bloom_level}</td>
                   <td className="border p-2 text-center">
                     {editable && (
@@ -563,26 +568,64 @@ export default function OutlineEditor() {
               </tr>
             </thead>
             <tbody>
-              {assessments.map((a) => (
-                <tr key={a.id}>
-                  <td className="border p-2">{a.name}</td>
-                  <td className="border p-2 text-center">{a.type}</td>
-                  <td className="border p-2 text-center">{a.weight_percent}</td>
-                  <td className="border p-2 text-center">
-                    {(a.clo_ids || []).map(cloLabel).join(", ")}
-                  </td>
-                  <td className="border p-2 text-center">
-                    {editable && (
-                      <button
-                        onClick={() => deleteAssessment(a.id)}
-                        className="text-red-600 hover:underline"
-                      >
-                        Xóa
-                      </button>
+              {assessments.map((a) => {
+                const criteria = a.rubric_json?.criteria || [];
+                return (
+                  <Fragment key={a.id}>
+                    <tr>
+                      <td className="border p-2">{a.name}</td>
+                      <td className="border p-2 text-center">{a.type}</td>
+                      <td className="border p-2 text-center">{a.weight_percent}</td>
+                      <td className="border p-2 text-center">
+                        {(a.clo_ids || []).map(cloLabel).join(", ")}
+                      </td>
+                      <td className="border p-2 text-center">
+                        {editable && (
+                          <button
+                            onClick={() => deleteAssessment(a.id)}
+                            className="text-red-600 hover:underline"
+                          >
+                            Xóa
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                    {criteria.length > 0 && (
+                      <tr>
+                        <td colSpan={5} className="border bg-slate-50 p-2">
+                          <div className="text-xs font-semibold text-slate-600">
+                            Rubric chấm điểm — {a.name}
+                          </div>
+                          <table className="mt-1 w-full text-xs">
+                            <thead>
+                              <tr className="text-slate-500">
+                                <th className="p-1 text-left">Tiêu chí</th>
+                                <th className="p-1">Trọng số</th>
+                                <th className="p-1 text-left">Các mức chất lượng</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {criteria.map((cr: any, i: number) => (
+                                <tr key={i} className="align-top">
+                                  <td className="p-1">{cr.name}</td>
+                                  <td className="p-1 text-center">{cr.weight_percent}%</td>
+                                  <td className="p-1">
+                                    <ul className="list-disc pl-4">
+                                      {(cr.levels || []).map((lv: string, j: number) => (
+                                        <li key={j}>{lv}</li>
+                                      ))}
+                                    </ul>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </td>
+                      </tr>
                     )}
-                  </td>
-                </tr>
-              ))}
+                  </Fragment>
+                );
+              })}
               {assessments.length === 0 && (
                 <tr>
                   <td colSpan={5} className="border p-2 text-center text-slate-500">

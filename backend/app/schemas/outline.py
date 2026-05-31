@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 class CloBase(BaseModel):
     code: str
     description: str
+    description_en: str | None = None
     bloom_level: str | None = None
 
 

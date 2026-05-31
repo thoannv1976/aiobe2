@@ -25,6 +25,9 @@ kèm mức đóng góp I (Introduce) / R (Reinforce) / M (Master) hợp lý vớ
 - MỖI CLO phải được phủ bởi ít nhất một cấu phần đánh giá (constructive alignment).
 - {assessment_rule}
 - Tổng trọng số các cấu phần đánh giá BẰNG ĐÚNG 100.
+- MỖI cấu phần đánh giá phải kèm RUBRIC: 2–4 tiêu chí chấm điểm, mỗi tiêu chí có trọng số (%) \
+trong cấu phần (tổng các tiêu chí của một cấu phần = 100) và mô tả 3–4 MỨC chất lượng \
+(ví dụ Giỏi/Khá/Đạt/Chưa đạt) cụ thể, đo lường được.
 - Kế hoạch giảng dạy trải {num_weeks} tuần, mỗi tuần một chủ đề gắn với (các) CLO liên quan; \
 toàn bộ CLO đều phải xuất hiện trong kế hoạch giảng dạy.
 - Phương pháp dạy-học đa dạng, phù hợp để đạt CLO (thuyết giảng, thảo luận, thực hành, dự án…).
@@ -34,8 +37,8 @@ Chỉ trả về DUY NHẤT một JSON hợp lệ (không markdown, không văn 
   "description": "mô tả học phần",
   "teaching_methods": ["..."],
   "references": ["..."],
-  "clos": [{{"code":"CLO1","description":"","bloom_level":"remember|understand|apply|analyze|evaluate|create","plos":[{{"plo_code":"PLO1","level":"I|R|M"}}]}}],
-  "assessments": [{{"name":"","type":"","weight_percent":0,"clo_codes":["CLO1"]}}],
+  "clos": [{{"code":"CLO1","description":"mô tả tiếng Việt","description_en":"English translation","bloom_level":"remember|understand|apply|analyze|evaluate|create","plos":[{{"plo_code":"PLO1","level":"I|R|M"}}]}}],
+  "assessments": [{{"name":"","type":"","weight_percent":0,"clo_codes":["CLO1"],"rubric":[{{"name":"tiêu chí","weight_percent":0,"levels":["Giỏi: ...","Khá: ...","Đạt: ...","Chưa đạt: ..."]}}]}}],
   "lessons": [{{"week":1,"topic":"","clo_codes":["CLO1"]}}]
 }}
 Chỉ dùng các mã PLO có trong dữ liệu được cung cấp. KHÔNG bịa PLO không tồn tại."""
@@ -49,10 +52,14 @@ ASSESSMENT_SCHEMES = {
 }
 
 BLOOM_STYLE_BILINGUAL = (
-    "Viết mô tả CLO SONG NGỮ: tiếng Việt trước, kèm động từ Bloom tiếng Anh trong ngoặc đơn "
-    "ở đầu, ví dụ: 'Phân tích (Analyze) các yếu tố...'."
+    "Viết SONG NGỮ ĐẦY ĐỦ: trường 'description' là mô tả CLO tiếng Việt (động từ Bloom "
+    "tiếng Anh trong ngoặc ở đầu, ví dụ 'Phân tích (Analyze) các yếu tố...'); trường "
+    "'description_en' là BẢN DỊCH TIẾNG ANH HOÀN CHỈNH của CLO đó."
 )
-BLOOM_STYLE_VI = "Viết mô tả CLO bằng tiếng Việt với động từ Bloom rõ ràng."
+BLOOM_STYLE_VI = (
+    "Viết mô tả CLO ('description') bằng tiếng Việt với động từ Bloom rõ ràng; "
+    "để trống 'description_en'."
+)
 
 
 def build_system_prompt(
@@ -128,7 +135,7 @@ def generate_outline_ai(
 
     msg = client.messages.create(
         model=settings.anthropic_model,
-        max_tokens=8000,
+        max_tokens=12000,  # rubric + bản dịch EN làm output dài hơn
         system=build_system_prompt(num_clos, num_weeks, assessment_scheme, bilingual),
         messages=[{"role": "user", "content": user_content}],
     )

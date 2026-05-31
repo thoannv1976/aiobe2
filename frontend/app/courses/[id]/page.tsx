@@ -20,6 +20,9 @@ export default function CourseDetail() {
   const [templateId, setTemplateId] = useState<string>("");
   const [aunqaId, setAunqaId] = useState<string>("");
   const [scheme, setScheme] = useState<string>("10-30-60");
+  const [numClos, setNumClos] = useState<string>("4–6");
+  const [numWeeks, setNumWeeks] = useState<number>(15);
+  const [bilingual, setBilingual] = useState<boolean>(true);
 
   async function load() {
     try {
@@ -68,6 +71,9 @@ export default function CourseDetail() {
       if (templateId) qs.set("template_doc_id", templateId);
       if (aunqaId) qs.set("aunqa_doc_id", aunqaId);
       qs.set("assessment_scheme", scheme);
+      qs.set("num_clos", numClos);
+      qs.set("num_weeks", String(numWeeks));
+      qs.set("bilingual", String(bilingual));
       const o = await api(`/api/courses/${id}/generate-outline?${qs.toString()}`, { method: "POST" });
       window.location.href = `/outlines/${o.id}`;
     } catch (e: any) {
@@ -178,6 +184,26 @@ export default function CourseDetail() {
               <option value="20-30-50">QT20 / GK30 / CK50</option>
               <option value="auto">AI tự đề xuất</option>
             </select>
+            <select value={numClos} onChange={(e) => setNumClos(e.target.value)} className="rounded border p-1" title="Số CLO">
+              <option value="3–5">3–5 CLO</option>
+              <option value="4–6">4–6 CLO</option>
+              <option value="5–8">5–8 CLO</option>
+            </select>
+            <label className="flex items-center gap-1 text-slate-600" title="Số tuần giảng dạy">
+              <input
+                type="number"
+                min={1}
+                max={45}
+                value={numWeeks}
+                onChange={(e) => setNumWeeks(Number(e.target.value) || 15)}
+                className="w-14 rounded border p-1"
+              />
+              tuần
+            </label>
+            <label className="flex items-center gap-1 text-slate-600" title="CLO song ngữ Việt-Anh">
+              <input type="checkbox" checked={bilingual} onChange={(e) => setBilingual(e.target.checked)} />
+              Song ngữ
+            </label>
             <button
               onClick={generateOutlineAI}
               disabled={genBusy}

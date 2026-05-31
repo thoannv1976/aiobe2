@@ -180,6 +180,7 @@ class Clo(Base):
     outline_id: Mapped[int] = mapped_column(ForeignKey("course_outlines.id", ondelete="CASCADE"))
     code: Mapped[str] = mapped_column(String(50))
     description: Mapped[str] = mapped_column(Text)
+    description_en: Mapped[str | None] = mapped_column(Text, nullable=True)
     bloom_level: Mapped[str | None] = mapped_column(String(50), nullable=True)
 
     outline: Mapped[CourseOutline] = relationship(back_populates="clos")
