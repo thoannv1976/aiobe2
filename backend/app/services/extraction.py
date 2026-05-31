@@ -42,12 +42,44 @@ def extract_text_from_file(path: str, mime: str | None = None) -> str:
                 return ocr
         return text
     if lower.endswith(".docx"):
-        from docx import Document as Docx
-
-        d = Docx(path)
-        return "\n".join(p.text for p in d.paragraphs)
+        return _docx_to_text(path)
     with open(path, encoding="utf-8", errors="ignore") as f:
         return f.read()
+
+
+def _docx_to_text(path: str) -> str:
+    """Đọc DOCX gồm CẢ đoạn văn lẫn BẢNG, theo đúng thứ tự xuất hiện.
+
+    Nhiều đề án mở ngành đặt danh mục học phần / ma trận PLO trong bảng;
+    nếu chỉ đọc `paragraphs` sẽ mất phần lớn nội dung này.
+    """
+    from docx import Document as Docx
+    from docx.oxml.ns import qn
+    from docx.table import Table
+    from docx.text.paragraph import Paragraph
+
+    d = Docx(path)
+    parts: list[str] = []
+
+    def render_table(tbl: Table) -> None:
+        for row in tbl.rows:
+            cells = [c.text.strip() for c in row.cells]
+            # Bỏ ô lặp do merge ngang (python-docx trả cell trùng).
+            dedup: list[str] = []
+            for c in cells:
+                if not dedup or dedup[-1] != c:
+                    dedup.append(c)
+            parts.append(" | ".join(dedup))
+
+    # Duyệt body theo thứ tự block (đoạn văn xen kẽ bảng).
+    body = d.element.body
+    for child in body.iterchildren():
+        if child.tag == qn("w:p"):
+            parts.append(Paragraph(child, d).text)
+        elif child.tag == qn("w:tbl"):
+            render_table(Table(child, d))
+
+    return "\n".join(parts)
 
 
 def _ocr_pdf(doc) -> str:
@@ -70,13 +102,19 @@ def _ocr_pdf(doc) -> str:
     return "\n".join(out)
 
 
+def _strip_code_fence(text: str) -> str:
+    """Bỏ rào ```json ... ``` nếu LLM kèm vào (giữ nguyên phần còn lại)."""
+    t = text.strip()
+    if t.startswith("```"):
+        t = t.split("```", 2)[1]
+        if t.startswith("json"):
+            t = t[4:]
+    return t
+
+
 def _strip_to_json(text: str) -> str:
     """Lấy phần JSON nếu LLM lỡ kèm văn bản thừa."""
-    text = text.strip()
-    if text.startswith("```"):
-        text = text.split("```", 2)[1]
-        if text.startswith("json"):
-            text = text[4:]
+    text = _strip_code_fence(text)
     start, end = text.find("{"), text.rfind("}")
     if start != -1 and end != -1:
         return text[start : end + 1]
@@ -118,6 +156,58 @@ def suggest_chapter_outline(clos: list[dict], course_name: str) -> list[dict]:
     return [{"title": str(d.get("title", "")), "clo_codes": d.get("clo_codes", [])} for d in data]
 
 
+# Giới hạn input rộng (Claude hỗ trợ ngữ cảnh lớn). ~600k ký tự ≈ vài trăm trang.
+MAX_INPUT_CHARS = 600_000
+# Output JSON: danh mục học phần + ma trận có thể rất dài → cần token lớn.
+MAX_OUTPUT_TOKENS = 16_000
+
+
+def _repair_truncated_json(text: str) -> str:
+    """Cố vá JSON bị cắt cụt (do output chạm max_tokens): đóng nốt chuỗi/ngoặc.
+
+    Cắt tới ký tự '}' hoặc ']' cuối cùng hợp lý rồi cân bằng ngoặc còn thiếu.
+    """
+    s = text.strip()
+    # Bỏ phần đuôi dở dang sau dấu phẩy cuối nếu có.
+    # Đếm ngoặc ngoài chuỗi để biết cần đóng bao nhiêu.
+    in_str = False
+    esc = False
+    stack: list[str] = []
+    last_safe = 0
+    for i, ch in enumerate(s):
+        if esc:
+            esc = False
+            continue
+        if ch == "\\":
+            esc = True
+            continue
+        if ch == '"':
+            in_str = not in_str
+            continue
+        if in_str:
+            continue
+        if ch in "{[":
+            stack.append(ch)
+        elif ch in "}]":
+            if stack:
+                stack.pop()
+            if not stack:
+                last_safe = i + 1
+    if last_safe and last_safe == len(s.rstrip()):
+        return s  # JSON đã đóng đầy đủ
+    # JSON dở: tự đóng ngoặc còn mở.
+    if in_str:
+        s += '"'
+    # Bỏ dấu phẩy / khoảng trắng thừa ở đuôi (tránh ",]" hoặc ",}").
+    s = s.rstrip()
+    while s and s[-1] in ", \n\t\r":
+        s = s[:-1].rstrip()
+    # đóng ngoặc còn lại theo thứ tự ngược
+    for ch in reversed(stack):
+        s += "}" if ch == "{" else "]"
+    return s
+
+
 def call_llm_extract(text: str) -> ExtractionPayload:
     """Gọi Claude trích xuất; validate bằng Pydantic. Không có API key -> lỗi rõ ràng."""
     if not settings.anthropic_api_key:
@@ -127,14 +217,20 @@ def call_llm_extract(text: str) -> ExtractionPayload:
     import anthropic
 
     client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
-    # Cắt bớt nếu quá dài (giữ phần đầu — thường chứa CTĐT/PLO).
-    chunk = text[:120_000]
+    chunk = text[:MAX_INPUT_CHARS]
     msg = client.messages.create(
         model=settings.anthropic_model,
-        max_tokens=8000,
+        max_tokens=MAX_OUTPUT_TOKENS,
         system=EXTRACTION_SYSTEM_PROMPT,
         messages=[{"role": "user", "content": chunk}],
     )
     raw = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
-    data = json.loads(_strip_to_json(raw))
+    try:
+        data = json.loads(_strip_to_json(raw))
+    except json.JSONDecodeError:
+        # Output có thể chạm trần token → JSON cắt cụt. Vá trên chuỗi gốc
+        # (bỏ rào ```/văn bản đầu, GIỮ nguyên đuôi để hàm vá tự đóng ngoặc).
+        head = _strip_code_fence(raw)
+        start = head.find("{")
+        data = json.loads(_repair_truncated_json(head[start:] if start != -1 else head))
     return ExtractionPayload.model_validate(data)
