@@ -33,3 +33,6 @@ uploads/
 
 # Next.js / TS build info
 *.tsbuildinfo
+
+# Marketing exports (generated)
+docs/marketing/
