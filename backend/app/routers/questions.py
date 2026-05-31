@@ -7,7 +7,18 @@ from sqlalchemy.orm import Session
 
 from app.core.deps import get_current_user, require_roles
 from app.database import get_db
-from app.models import Clo, Course, CourseOutline, ExamMatrix, Question, Role, User
+from app.models import (
+    Chapter,
+    ChapterClo,
+    Clo,
+    Course,
+    CourseOutline,
+    ExamMatrix,
+    Question,
+    Role,
+    Textbook,
+    User,
+)
 from app.schemas.exam import (
     ExamMatrixCreate,
     ExamMatrixOut,
@@ -60,6 +71,44 @@ def _latest_clos(db: Session, course_id: int) -> list[Clo]:
     return db.query(Clo).filter(Clo.outline_id == outline.id).all()
 
 
+# Giới hạn ký tự nội dung giáo trình gom cho mỗi CLO (an toàn độ dài prompt).
+_MAX_MATERIAL_PER_CLO = 12000
+
+
+def _gather_clo_materials(db: Session, course_id: int, clos: list[Clo]) -> dict[str, str]:
+    """Gom nội dung các chương giáo trình gắn với từng CLO -> {clo_code: text}.
+
+    Tìm qua bảng nối chapter_clo (Chapter n—n CLO) trên các giáo trình của học phần.
+    """
+    clo_ids = [c.id for c in clos]
+    if not clo_ids:
+        return {}
+    tb_ids = [t.id for t in db.query(Textbook).filter(Textbook.course_id == course_id).all()]
+    if not tb_ids:
+        return {}
+    id_to_code = {c.id: c.code for c in clos}
+    by_code: dict[str, list[str]] = {c.code: [] for c in clos}
+
+    rows = (
+        db.query(ChapterClo, Chapter)
+        .join(Chapter, Chapter.id == ChapterClo.chapter_id)
+        .filter(ChapterClo.clo_id.in_(clo_ids), Chapter.textbook_id.in_(tb_ids))
+        .order_by(Chapter.order)
+        .all()
+    )
+    for cc, ch in rows:
+        code = id_to_code.get(cc.clo_id)
+        content = (ch.content_richtext or "").strip()
+        if code and content:
+            by_code[code].append(f"### Chương: {ch.title}\n{content}")
+
+    out: dict[str, str] = {}
+    for code, parts in by_code.items():
+        if parts:
+            out[code] = "\n\n".join(parts)[:_MAX_MATERIAL_PER_CLO]
+    return out
+
+
 @router.post("/courses/{course_id}/questions/generate")
 def generate_questions(
     course_id: int,
@@ -85,6 +134,9 @@ def generate_questions(
             raise HTTPException(400, "Không có CLO hợp lệ trong danh sách đã chọn.")
     clo_by_code = {c.code: c for c in clos}
 
+    # Gom nội dung các chương giáo trình gắn với mỗi CLO làm ngữ liệu ra đề (SPEC 4.4/4.5).
+    clo_materials = _gather_clo_materials(db, course_id, clos)
+
     try:
         gen = generate_questions_ai(
             course={"code": course.code, "name": course.name},
@@ -93,6 +145,7 @@ def generate_questions(
             bloom_levels=payload.bloom_levels or None,
             difficulties=payload.difficulties or None,
             question_type=payload.question_type,
+            clo_materials=clo_materials,
         )
     except Exception as e:  # noqa: BLE001
         raise HTTPException(400, f"Sinh câu hỏi thất bại: {e}")

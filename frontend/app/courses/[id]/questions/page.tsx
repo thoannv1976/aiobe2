@@ -124,6 +124,7 @@ export default function QuestionsPage() {
   const [genNum, setGenNum] = useState<number>(3);
   const [genType, setGenType] = useState<string>("mcq_single");
   const [genCloIds, setGenCloIds] = useState<number[]>([]);
+  const [cloChapters, setCloChapters] = useState<Record<number, string[]>>({});
   const [genMsg, setGenMsg] = useState("");
 
   async function generateQuestions() {
@@ -160,6 +161,22 @@ export default function QuestionsPage() {
       setQuestions(await api(`/api/courses/${id}/questions`));
       setStats(await api(`/api/courses/${id}/questions/stats`));
       setMatrices(await api(`/api/courses/${id}/matrices`));
+      // Gom các chương giáo trình gắn theo từng CLO (để hiển thị nguồn ngữ liệu).
+      try {
+        const tbs: any[] = await api(`/api/courses/${id}/textbooks`);
+        const map: Record<number, string[]> = {};
+        for (const tb of tbs) {
+          const chs: any[] = await api(`/api/textbooks/${tb.id}/chapters`);
+          for (const ch of chs) {
+            for (const cid of ch.clo_ids || []) {
+              (map[cid] = map[cid] || []).push(`${tb.title} › ${ch.title}`);
+            }
+          }
+        }
+        setCloChapters(map);
+      } catch {
+        setCloChapters({});
+      }
     } catch (e: any) {
       setErr(e.message);
     }
@@ -427,8 +444,9 @@ export default function QuestionsPage() {
       <section className="rounded-lg border border-green-200 bg-green-50/40 p-4">
         <h2 className="mb-1 text-lg font-semibold">✨ Tạo câu hỏi bằng AI</h2>
         <p className="mb-3 text-sm text-slate-600">
-          AI soạn câu hỏi bám theo CLO của đề cương (gắn CLO + Bloom + độ khó). Câu hỏi được
-          ghi vào ngân hàng — hãy rà soát/chỉnh sửa sau khi tạo.
+          AI soạn câu hỏi bám theo CLO của đề cương (gắn CLO + Bloom + độ khó) và <b>nội dung
+          các chương giáo trình gắn với CLO đó</b> (nếu có). Câu hỏi được ghi vào ngân hàng —
+          hãy rà soát/chỉnh sửa sau khi tạo.
         </p>
         {clos.length === 0 ? (
           <p className="text-sm text-amber-700">
@@ -459,23 +477,42 @@ export default function QuestionsPage() {
                 ))}
               </select>
             </label>
-            <label className="text-sm">
-              CLO áp dụng
-              <select
-                multiple
-                value={genCloIds.map(String)}
-                onChange={(e) =>
-                  setGenCloIds(Array.from(e.target.selectedOptions).map((o) => Number(o.value)))
-                }
-                className="mt-1 block min-w-[10rem] rounded border p-1"
-                size={Math.min(clos.length, 4)}
-              >
-                {clos.map((c) => (
-                  <option key={c.id} value={c.id}>{c.code}</option>
-                ))}
-              </select>
-              <span className="text-xs text-slate-400">(bỏ trống = tất cả CLO)</span>
-            </label>
+            <div className="text-sm">
+              <div className="mb-1">CLO áp dụng <span className="text-xs text-slate-400">(bỏ trống = tất cả CLO)</span></div>
+              <div className="max-h-44 min-w-[20rem] space-y-1 overflow-auto rounded border bg-white p-2">
+                {clos.map((c) => {
+                  const chs = cloChapters[c.id] || [];
+                  return (
+                    <label key={c.id} className="flex items-start gap-2">
+                      <input
+                        type="checkbox"
+                        className="mt-1"
+                        checked={genCloIds.includes(c.id)}
+                        onChange={(e) =>
+                          setGenCloIds(
+                            e.target.checked
+                              ? [...genCloIds, c.id]
+                              : genCloIds.filter((x) => x !== c.id)
+                          )
+                        }
+                      />
+                      <span>
+                        <b>{c.code}</b>
+                        {chs.length > 0 ? (
+                          <span className="ml-1 text-xs text-green-700">
+                            📚 {chs.length} chương: {chs.join("; ")}
+                          </span>
+                        ) : (
+                          <span className="ml-1 text-xs text-amber-600">
+                            ⚠ chưa có chương giáo trình gắn — AI ra đề theo mô tả CLO
+                          </span>
+                        )}
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
             <button
               onClick={generateQuestions}
               disabled={genBusy}

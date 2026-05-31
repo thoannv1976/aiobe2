@@ -14,6 +14,8 @@ cho ngân hàng đề thi của một học phần, bám sát CHUẨN ĐẦU RA 
 
 Yêu cầu bắt buộc:
 - MỖI câu hỏi gắn với đúng một CLO (dùng mã CLO được cung cấp) và một mức Bloom phù hợp nội dung CLO.
+- BÁM SÁT NỘI DUNG GIÁO TRÌNH được cung cấp cho từng CLO (nếu có): câu hỏi phải kiểm tra \
+kiến thức/kỹ năng thực sự xuất hiện trong nội dung giáo trình đó, KHÔNG hỏi ngoài phạm vi.
 - Độ khó (easy/medium/hard) và loại câu hỏi theo yêu cầu.
 - Với câu trắc nghiệm (mcq_single/mcq_multi): cung cấp 4 phương án trong "options"; \
 "answer" ghi rõ phương án đúng (vd "A" hoặc "A,C" cho nhiều đáp án).
@@ -42,6 +44,10 @@ def _strip_to_json(text: str) -> str:
     return t[start : end + 1] if start != -1 and end != -1 else t
 
 
+# Giới hạn ký tự ngữ liệu giáo trình nhúng cho mỗi CLO (tránh prompt quá dài).
+MAX_MATERIAL_CHARS_PER_CLO = 12000
+
+
 def generate_questions_ai(
     course: dict,
     clos: list[dict],            # [{code, description, bloom_level}]
@@ -49,8 +55,13 @@ def generate_questions_ai(
     bloom_levels: list[str] | None = None,
     difficulties: list[str] | None = None,
     question_type: str = "mcq_single",
+    clo_materials: dict[str, str] | None = None,  # {clo_code: nội dung giáo trình}
 ) -> GeneratedQuestions:
-    """Gọi Claude sinh câu hỏi; validate Pydantic. Cần ANTHROPIC_API_KEY."""
+    """Gọi Claude sinh câu hỏi; validate Pydantic. Cần ANTHROPIC_API_KEY.
+
+    clo_materials: nội dung các chương giáo trình gắn với từng CLO, dùng làm ngữ liệu
+    để câu hỏi bám sát giáo trình thực tế (SPEC 4.4/4.5).
+    """
     if not settings.anthropic_api_key:
         raise RuntimeError("Chưa cấu hình ANTHROPIC_API_KEY.")
     if not clos:
@@ -58,11 +69,22 @@ def generate_questions_ai(
     import anthropic
 
     client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
-    clo_lines = "\n".join(
-        f"- {c['code']} ({c.get('bloom_level','')}): {c['description']}" for c in clos
-    )
+    materials = clo_materials or {}
+    clo_blocks = []
+    for c in clos:
+        block = f"- {c['code']} ({c.get('bloom_level','')}): {c['description']}"
+        mat = (materials.get(c["code"]) or "").strip()
+        if mat:
+            block += (
+                f"\n  NỘI DUNG GIÁO TRÌNH gắn với {c['code']} (dùng làm ngữ liệu ra đề):\n"
+                f"\"\"\"\n{mat[:MAX_MATERIAL_CHARS_PER_CLO]}\n\"\"\""
+            )
+        clo_blocks.append(block)
+    clo_lines = "\n".join(clo_blocks)
+
     bloom_txt = ", ".join(bloom_levels) if bloom_levels else "phù hợp với từng CLO"
     diff_txt = ", ".join(difficulties) if difficulties else "đa dạng (dễ/trung bình/khó)"
+    has_material = any((materials.get(c["code"]) or "").strip() for c in clos)
 
     user_content = (
         f"HỌC PHẦN: {course.get('code','')} — {course.get('name','')}.\n"
@@ -71,7 +93,9 @@ def generate_questions_ai(
         f"- Loại câu hỏi: {question_type}.\n"
         f"- Mức Bloom: {bloom_txt}.\n"
         f"- Độ khó: {diff_txt}.\n"
-        "Phân bổ đều, tránh trùng lặp nội dung."
+        + ("- BÁM SÁT phần NỘI DUNG GIÁO TRÌNH cung cấp cho mỗi CLO; chỉ ra đề trong phạm vi đó.\n"
+           if has_material else "")
+        + "Phân bổ đều, tránh trùng lặp nội dung."
     )
 
     msg = client.messages.create(
