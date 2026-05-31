@@ -11,9 +11,13 @@ from app.models import (
     CloPlo,
     Course,
     CourseOutline,
+    Document,
     LessonPlan,
     LessonPlanClo,
     OutlineStatus,
+    Pi,
+    Plo,
+    Program,
     Role,
     User,
 )
@@ -33,6 +37,7 @@ from app.services.alignment import check_outline_alignment
 from app.services.audit import log_action
 from app.services.diff import diff_outlines
 from app.services.exports import outline_to_docx
+from app.services.outline_ai import generate_outline_ai
 
 router = APIRouter(prefix="/api", tags=["outline"])
 
@@ -82,6 +87,114 @@ def create_outline(payload: OutlineCreate, db: Session = Depends(get_db), user: 
     db.refresh(obj)
     log_action(db, user.id, "outline", obj.id, "create")
     return obj
+
+
+@router.post("/courses/{course_id}/generate-outline", response_model=OutlineOut, status_code=201)
+def generate_outline(
+    course_id: int,
+    template_doc_id: int | None = None,
+    aunqa_doc_id: int | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(LECTURER),
+):
+    """Sinh đề cương bằng AI từ CTĐT + PLO + PI + ma trận Học phần×PLO (SPEC 4.3).
+
+    Tùy chọn truyền template_doc_id (mẫu đề cương) và aunqa_doc_id (chuẩn AUN-QA) đã upload.
+    Ghi ra một đề cương DRAFT (CLO, ma trận CLO×PLO, đánh giá, kế hoạch dạy) để người dùng rà soát.
+    """
+    course = db.get(Course, course_id)
+    if not course:
+        raise HTTPException(404, "Không tìm thấy học phần")
+    program = db.get(Program, course.program_id)
+    plos = db.query(Plo).filter(Plo.program_id == course.program_id).all()
+    plo_by_code = {p.code: p for p in plos}
+    pis = (
+        db.query(Pi).filter(Pi.plo_id.in_([p.id for p in plos] or [-1])).all() if plos else []
+    )
+    plo_code_by_id = {p.id: p.code for p in plos}
+
+    # Ma trận Học phần×PLO (bảng course_plo).
+    from app.models import CoursePlo
+
+    course_plo = [
+        {"plo_code": plo_code_by_id[cp.plo_id], "level": cp.level}
+        for cp in db.query(CoursePlo).filter(CoursePlo.course_id == course_id).all()
+        if cp.plo_id in plo_code_by_id
+    ]
+
+    def _doc_text(doc_id: int | None) -> str:
+        if not doc_id:
+            return ""
+        d = db.get(Document, doc_id)
+        return d.extracted_text or "" if d else ""
+
+    try:
+        gen = generate_outline_ai(
+            course={
+                "code": course.code, "name": course.name, "credits": course.credits,
+                "semester": course.semester, "type": course.type,
+                "program_name": program.name if program else "",
+            },
+            plos=[{"code": p.code, "category": p.category or "", "description": p.description} for p in plos],
+            pis=[{"code": pi.code, "plo_code": plo_code_by_id.get(pi.plo_id, ""), "description": pi.description} for pi in pis],
+            course_plo=course_plo,
+            template_text=_doc_text(template_doc_id),
+            aunqa_text=_doc_text(aunqa_doc_id),
+        )
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(400, f"Sinh đề cương thất bại: {e}")
+
+    # Ghi ra đề cương DRAFT (phiên bản mới nhất + 1).
+    latest = (
+        db.query(CourseOutline)
+        .filter(CourseOutline.course_id == course_id)
+        .order_by(CourseOutline.version.desc())
+        .first()
+    )
+    outline = CourseOutline(
+        course_id=course_id,
+        version=(latest.version + 1) if latest else 1,
+        status="draft",
+        description=gen.description,
+        general_info_json={"generated_by_ai": True},
+        teaching_methods_json=gen.teaching_methods,
+        references_json=gen.references,
+        created_by=user.id,
+    )
+    db.add(outline)
+    db.flush()
+
+    clo_by_code: dict[str, Clo] = {}
+    for gc in gen.clos:
+        clo = Clo(outline_id=outline.id, code=gc.code, description=gc.description, bloom_level=gc.bloom_level or None)
+        db.add(clo)
+        db.flush()
+        clo_by_code[gc.code] = clo
+        for cp in gc.plos:
+            plo = plo_by_code.get(cp.plo_code)
+            if plo:
+                db.add(CloPlo(clo_id=clo.id, plo_id=plo.id, contribution_level=cp.level or "R"))
+
+    for ga in gen.assessments:
+        a = Assessment(outline_id=outline.id, name=ga.name, type=ga.type or None, weight_percent=ga.weight_percent)
+        db.add(a)
+        db.flush()
+        for code in ga.clo_codes:
+            if code in clo_by_code:
+                db.add(AssessmentClo(assessment_id=a.id, clo_id=clo_by_code[code].id))
+
+    for gl in gen.lessons:
+        lp = LessonPlan(outline_id=outline.id, week=gl.week, topic=gl.topic, activities_json={})
+        db.add(lp)
+        db.flush()
+        for code in gl.clo_codes:
+            if code in clo_by_code:
+                db.add(LessonPlanClo(lesson_plan_id=lp.id, clo_id=clo_by_code[code].id))
+
+    db.commit()
+    db.refresh(outline)
+    log_action(db, user.id, "outline", outline.id, "generate_ai", {"course_id": course_id})
+    return outline
 
 
 @router.get("/outlines/{outline_id}", response_model=OutlineOut)

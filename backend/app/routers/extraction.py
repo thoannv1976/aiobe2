@@ -26,11 +26,26 @@ router = APIRouter(prefix="/api", tags=["extraction"])
 MANAGER = require_roles(Role.PROGRAM_MANAGER, Role.LECTURER)
 
 
+from fastapi import Form  # noqa: E402
+
+# Các loại tài liệu hỗ trợ (SPEC 4.1, 4.3).
+DOC_TYPES = {"program_proposal", "outline_template", "aunqa_standard"}
+
+
 @router.post("/documents/upload")
 async def upload_document(
-    file: UploadFile, db: Session = Depends(get_db), user: User = Depends(MANAGER)
+    file: UploadFile,
+    doc_type: str = Form("program_proposal"),
+    db: Session = Depends(get_db),
+    user: User = Depends(MANAGER),
 ):
-    """Upload đề án mở ngành (PDF/DOCX). Lưu file gốc làm minh chứng (SPEC 4.1)."""
+    """Upload tài liệu (PDF/DOCX/TXT). Lưu file gốc làm minh chứng (SPEC 4.1).
+
+    doc_type: program_proposal (đề án mở ngành) | outline_template (mẫu đề cương)
+    | aunqa_standard (tài liệu chuẩn AUN-QA).
+    """
+    if doc_type not in DOC_TYPES:
+        doc_type = "program_proposal"
     os.makedirs(settings.storage_dir, exist_ok=True)
     ext = os.path.splitext(file.filename or "")[1]
     saved = os.path.join(settings.storage_dir, f"{uuid.uuid4().hex}{ext}")
@@ -42,14 +57,14 @@ async def upload_document(
     except Exception as e:  # noqa: BLE001
         text = f"[Không trích được văn bản: {e}]"
     doc = Document(
-        type="program_proposal", file_path=saved, mime=file.content_type,
+        type=doc_type, file_path=saved, mime=file.content_type,
         uploaded_by=user.id, original_name=file.filename, extracted_text=text,
     )
     db.add(doc)
     db.commit()
     db.refresh(doc)
-    log_action(db, user.id, "document", doc.id, "upload")
-    return {"document_id": doc.id, "original_name": doc.original_name, "text_length": len(text)}
+    log_action(db, user.id, "document", doc.id, "upload", {"doc_type": doc_type})
+    return {"document_id": doc.id, "original_name": doc.original_name, "type": doc.type, "text_length": len(text)}
 
 
 @router.post("/documents/{doc_id}/extract")
