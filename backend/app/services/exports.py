@@ -242,19 +242,40 @@ def textbook_to_docx(db: Session, textbook_id: int) -> bytes:
     return buf.read()
 
 
-_FONT_REGULAR = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
-_FONT_BOLD = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+# Dò font DejaVu ở các vị trí phổ biến (khác nhau giữa các base image Linux).
+_FONT_DIRS = [
+    "/usr/share/fonts/truetype/dejavu",
+    "/usr/share/fonts/dejavu",
+    "/usr/share/fonts/TTF",
+]
+
+
+def _find_font(name: str) -> str | None:
+    import os
+
+    for d in _FONT_DIRS:
+        p = os.path.join(d, name)
+        if os.path.exists(p):
+            return p
+    return None
 
 
 def textbook_to_pdf(db: Session, textbook_id: int) -> bytes:
     """Xuất giáo trình ra PDF (fpdf2 + font DejaVu hỗ trợ tiếng Việt)."""
     from fpdf import FPDF
 
+    regular = _find_font("DejaVuSans.ttf")
+    bold = _find_font("DejaVuSans-Bold.ttf")
+    if not regular:
+        raise ValueError(
+            "Thiếu font DejaVu để xuất PDF tiếng Việt. Cài gói 'fonts-dejavu-core'."
+        )
+
     tb, course, chapters = _gather_textbook(db, textbook_id)
     pdf = FPDF()
     pdf.set_auto_page_break(auto=True, margin=15)
-    pdf.add_font("DejaVu", "", _FONT_REGULAR)
-    pdf.add_font("DejaVu", "B", _FONT_BOLD)
+    pdf.add_font("DejaVu", "", regular)
+    pdf.add_font("DejaVu", "B", bold or regular)
     pdf.add_page()
 
     pdf.set_font("DejaVu", "B", 18)
