@@ -89,7 +89,7 @@ upsert_secret obe-database-url "${DATABASE_URL}"
 if ! gcloud secrets describe obe-jwt-secret >/dev/null 2>&1; then
   upsert_secret obe-jwt-secret "$(openssl rand -hex 32)"
 fi
-upsert_secret anthropic-api-key "${ANTHROPIC_API_KEY:-}"
+# DISABLED: secret set manually -- upsert_secret anthropic-api-key "${ANTHROPIC_API_KEY:-}"
 
 say "Cấp quyền cho service account runtime (${RUNTIME_SA})"
 for ROLE in roles/cloudsql.client roles/secretmanager.secretAccessor; do
