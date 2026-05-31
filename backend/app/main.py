@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.database import Base, engine
 from app.routers import (
+    assignments,
     auth,
     exams,
     extraction,
@@ -25,7 +26,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-for r in (auth, programs, outlines, textbooks, questions, exams, extraction, reports):
+for r in (auth, programs, outlines, textbooks, questions, exams, extraction, reports, assignments):
     app.include_router(r.router)
 
 

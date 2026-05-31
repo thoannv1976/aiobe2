@@ -3,9 +3,10 @@ from sqlalchemy.orm import Session
 
 from app.core.deps import get_current_user, require_roles
 from app.database import get_db
-from app.models import Chapter, ChapterClo, Course, Role, Textbook, User
+from app.models import Chapter, ChapterClo, Clo, Course, CourseOutline, Role, Textbook, User
 from app.schemas.content import ChapterCreate, ChapterOut, TextbookCreate, TextbookOut
 from app.services.audit import log_action
+from app.services.extraction import suggest_chapter_outline
 
 router = APIRouter(prefix="/api", tags=["textbooks"])
 LECTURER = require_roles(Role.LECTURER, Role.PROGRAM_MANAGER)
@@ -56,3 +57,58 @@ def create_chapter(tid: int, payload: ChapterCreate, db: Session = Depends(get_d
     res.clo_ids = payload.clo_ids
     log_action(db, user.id, "chapter", obj.id, "create")
     return res
+
+
+@router.patch("/chapters/{cid}", response_model=ChapterOut)
+def update_chapter(cid: int, payload: ChapterCreate, db: Session = Depends(get_db), user: User = Depends(LECTURER)):
+    obj = db.get(Chapter, cid)
+    if not obj:
+        raise HTTPException(404, "Không tìm thấy chương")
+    obj.order = payload.order
+    obj.title = payload.title
+    obj.content_richtext = payload.content_richtext
+    db.query(ChapterClo).filter(ChapterClo.chapter_id == cid).delete()
+    for clo_id in payload.clo_ids:
+        db.add(ChapterClo(chapter_id=cid, clo_id=clo_id))
+    db.commit()
+    db.refresh(obj)
+    res = ChapterOut.model_validate(obj)
+    res.clo_ids = payload.clo_ids
+    log_action(db, user.id, "chapter", cid, "update")
+    return res
+
+
+@router.delete("/chapters/{cid}", status_code=204)
+def delete_chapter(cid: int, db: Session = Depends(get_db), user: User = Depends(LECTURER)):
+    obj = db.get(Chapter, cid)
+    if obj:
+        db.delete(obj)
+        db.commit()
+        log_action(db, user.id, "chapter", cid, "delete")
+
+
+@router.get("/courses/{course_id}/chapter-suggestions")
+def chapter_suggestions(course_id: int, db: Session = Depends(get_db), _: User = Depends(LECTURER)):
+    """Gợi ý đề mục giáo trình bằng AI dựa trên CLO của đề cương mới nhất (SPEC 4.4)."""
+    course = db.get(Course, course_id)
+    if not course:
+        raise HTTPException(404, "Không tìm thấy học phần")
+    outline = (
+        db.query(CourseOutline)
+        .filter(CourseOutline.course_id == course_id)
+        .order_by(CourseOutline.version.desc())
+        .first()
+    )
+    if not outline:
+        raise HTTPException(400, "Học phần chưa có đề cương/CLO để gợi ý")
+    clos = [
+        {"code": c.code, "description": c.description}
+        for c in db.query(Clo).filter(Clo.outline_id == outline.id).all()
+    ]
+    if not clos:
+        raise HTTPException(400, "Đề cương chưa có CLO")
+    try:
+        suggestions = suggest_chapter_outline(clos, course.name)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(400, f"Gợi ý thất bại: {e}")
+    return {"suggestions": suggestions}

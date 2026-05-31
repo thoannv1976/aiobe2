@@ -45,6 +45,19 @@ def create_question(
     return obj
 
 
+@router.put("/questions/{qid}", response_model=QuestionOut)
+def update_question(qid: int, payload: QuestionCreate, db: Session = Depends(get_db), user: User = Depends(LECTURER)):
+    obj = db.get(Question, qid)
+    if not obj or obj.is_deleted:
+        raise HTTPException(404, "Không tìm thấy câu hỏi")
+    for k, v in payload.model_dump().items():
+        setattr(obj, k, v)
+    db.commit()
+    db.refresh(obj)
+    log_action(db, user.id, "question", qid, "update")
+    return obj
+
+
 @router.delete("/questions/{qid}", status_code=204)
 def delete_question(qid: int, db: Session = Depends(get_db), user: User = Depends(LECTURER)):
     obj = db.get(Question, qid)
@@ -74,6 +87,28 @@ def export_csv(course_id: int, db: Session = Depends(get_db), _: User = Depends(
         iter([buf.getvalue()]),
         media_type="text/csv",
         headers={"Content-Disposition": f"attachment; filename=questions_{course_id}.csv"},
+    )
+
+
+@router.get("/courses/{course_id}/questions/export-xlsx")
+def export_xlsx(course_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+    """Xuất ngân hàng câu hỏi ra Excel (SPEC 4.5)."""
+    from openpyxl import Workbook
+
+    qs = db.query(Question).filter(Question.course_id == course_id, Question.is_deleted == False).all()  # noqa: E712
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Questions"
+    ws.append(["id", "clo_id", "bloom_level", "difficulty", "type", "content", "answer", "points", "explanation"])
+    for q in qs:
+        ws.append([q.id, q.clo_id, q.bloom_level, q.difficulty, q.type, q.content, q.answer, q.points, q.explanation])
+    bio = io.BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+    return StreamingResponse(
+        bio,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename=questions_{course_id}.xlsx"},
     )
 
 

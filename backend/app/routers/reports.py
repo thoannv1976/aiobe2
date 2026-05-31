@@ -15,6 +15,28 @@ router = APIRouter(prefix="/api", tags=["reports"])
 QA = require_roles(Role.QA, Role.PROGRAM_MANAGER)
 
 
+@router.get("/documents")
+def list_documents(
+    type: str | None = None,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """Kho minh chứng: liệt kê tài liệu gốc (SPEC 4.7), lọc theo loại."""
+    q = db.query(Document)
+    if type:
+        q = q.filter(Document.type == type)
+    rows = q.order_by(Document.id.desc()).all()
+    return [
+        {
+            "id": d.id, "type": d.type, "original_name": d.original_name,
+            "mime": d.mime, "uploaded_by": d.uploaded_by,
+            "created_at": d.created_at.isoformat() if d.created_at else None,
+            "text_length": len(d.extracted_text or ""),
+        }
+        for d in rows
+    ]
+
+
 @router.get("/programs/{program_id}/coverage-report")
 def coverage_report(program_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
     """Báo cáo phủ chuẩn PLO→PI→CLO→đánh giá (SPEC 4.7)."""

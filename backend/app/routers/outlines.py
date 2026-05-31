@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.core.deps import get_current_user, require_roles
@@ -30,6 +31,8 @@ from app.schemas.outline import (
 )
 from app.services.alignment import check_outline_alignment
 from app.services.audit import log_action
+from app.services.diff import diff_outlines
+from app.services.exports import outline_to_docx
 
 router = APIRouter(prefix="/api", tags=["outline"])
 
@@ -293,3 +296,68 @@ def create_lesson(
     res = LessonPlanOut.model_validate(obj)
     res.clo_ids = payload.clo_ids
     return res
+
+
+@router.delete("/assessments/{aid}", status_code=204)
+def delete_assessment(aid: int, db: Session = Depends(get_db), user: User = Depends(LECTURER)):
+    obj = db.get(Assessment, aid)
+    if obj:
+        db.delete(obj)
+        db.commit()
+        log_action(db, user.id, "assessment", aid, "delete")
+
+
+@router.delete("/lessons/{lid}", status_code=204)
+def delete_lesson(lid: int, db: Session = Depends(get_db), user: User = Depends(LECTURER)):
+    obj = db.get(LessonPlan, lid)
+    if obj:
+        db.delete(obj)
+        db.commit()
+        log_action(db, user.id, "lesson_plan", lid, "delete")
+
+
+@router.delete("/clo-plo", status_code=204)
+def delete_clo_plo(clo_id: int, plo_id: int, db: Session = Depends(get_db), user: User = Depends(LECTURER)):
+    obj = db.query(CloPlo).filter(CloPlo.clo_id == clo_id, CloPlo.plo_id == plo_id).first()
+    if obj:
+        db.delete(obj)
+        db.commit()
+        log_action(db, user.id, "clo_plo", obj.id, "delete")
+
+
+@router.patch("/outlines/{outline_id}", response_model=OutlineOut)
+def update_outline(outline_id: int, payload: OutlineCreate, db: Session = Depends(get_db), user: User = Depends(LECTURER)):
+    """Cập nhật thông tin chung đề cương (chỉ khi chưa Published)."""
+    obj = db.get(CourseOutline, outline_id)
+    if not obj:
+        raise HTTPException(404, "Không tìm thấy đề cương")
+    if obj.status in ("published", "archived"):
+        raise HTTPException(400, "Không sửa được đề cương đã ban hành")
+    obj.description = payload.description
+    obj.general_info_json = payload.general_info_json
+    obj.teaching_methods_json = payload.teaching_methods_json
+    obj.references_json = payload.references_json
+    db.commit()
+    db.refresh(obj)
+    log_action(db, user.id, "outline", outline_id, "update")
+    return obj
+
+
+@router.get("/outlines/{from_id}/diff/{to_id}")
+def outline_diff(from_id: int, to_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+    """So sánh hai phiên bản đề cương (SPEC 4.3)."""
+    return diff_outlines(db, from_id, to_id)
+
+
+@router.get("/outlines/{outline_id}/export")
+def export_outline(outline_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+    """Xuất đề cương ra DOCX (SPEC 4.3)."""
+    try:
+        data = outline_to_docx(db, outline_id)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    return StreamingResponse(
+        iter([data]),
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f"attachment; filename=de_cuong_{outline_id}.docx"},
+    )
