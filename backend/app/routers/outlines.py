@@ -428,6 +428,30 @@ def create_lesson(
     return res
 
 
+@router.patch("/assessments/{aid}", response_model=AssessmentOut)
+def update_assessment(
+    aid: int, payload: AssessmentCreate, db: Session = Depends(get_db), user: User = Depends(LECTURER)
+):
+    """Cập nhật cấu phần đánh giá, gồm rubric (SPEC 4.3)."""
+    obj = db.get(Assessment, aid)
+    if not obj:
+        raise HTTPException(404, "Không tìm thấy cấu phần đánh giá")
+    obj.name = payload.name
+    obj.type = payload.type
+    obj.weight_percent = payload.weight_percent
+    obj.rubric_json = payload.rubric_json
+    # Cập nhật ánh xạ CLO nếu được truyền.
+    db.query(AssessmentClo).filter(AssessmentClo.assessment_id == aid).delete()
+    for cid in payload.clo_ids:
+        db.add(AssessmentClo(assessment_id=aid, clo_id=cid))
+    db.commit()
+    db.refresh(obj)
+    log_action(db, user.id, "assessment", aid, "update")
+    res = AssessmentOut.model_validate(obj)
+    res.clo_ids = payload.clo_ids
+    return res
+
+
 @router.delete("/assessments/{aid}", status_code=204)
 def delete_assessment(aid: int, db: Session = Depends(get_db), user: User = Depends(LECTURER)):
     obj = db.get(Assessment, aid)

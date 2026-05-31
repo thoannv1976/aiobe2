@@ -264,6 +264,46 @@ export default function OutlineEditor() {
     }
   }
 
+  // ----- Sửa rubric -----
+  // editingRubric: id cấu phần đang sửa; draftCriteria: danh sách tiêu chí nháp.
+  const [editingRubric, setEditingRubric] = useState<number | null>(null);
+  const [draftCriteria, setDraftCriteria] = useState<any[]>([]);
+
+  function openRubricEditor(a: any) {
+    setEditingRubric(a.id);
+    setDraftCriteria((a.rubric_json?.criteria || []).map((c: any) => ({
+      name: c.name || "",
+      weight_percent: c.weight_percent || 0,
+      levels: (c.levels || []).join("\n"),
+    })));
+  }
+
+  async function saveRubric(a: any) {
+    setErr("");
+    try {
+      const criteria = draftCriteria.map((c) => ({
+        name: c.name,
+        weight_percent: Number(c.weight_percent) || 0,
+        levels: String(c.levels).split("\n").map((s) => s.trim()).filter(Boolean),
+      }));
+      await api(`/api/assessments/${a.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          name: a.name,
+          type: a.type || "",
+          weight_percent: a.weight_percent,
+          clo_ids: a.clo_ids || [],
+          rubric_json: { criteria },
+        }),
+      });
+      setEditingRubric(null);
+      setDraftCriteria([]);
+      await load();
+    } catch (e: any) {
+      setErr(e.message);
+    }
+  }
+
   // ----- Kế hoạch giảng dạy -----
   async function addLesson() {
     setErr("");
@@ -581,47 +621,135 @@ export default function OutlineEditor() {
                       </td>
                       <td className="border p-2 text-center">
                         {editable && (
-                          <button
-                            onClick={() => deleteAssessment(a.id)}
-                            className="text-red-600 hover:underline"
-                          >
-                            Xóa
-                          </button>
+                          <div className="flex flex-col gap-1">
+                            <button
+                              onClick={() => openRubricEditor(a)}
+                              className="text-indigo-600 hover:underline"
+                            >
+                              {criteria.length > 0 ? "Sửa rubric" : "+ Rubric"}
+                            </button>
+                            <button
+                              onClick={() => deleteAssessment(a.id)}
+                              className="text-red-600 hover:underline"
+                            >
+                              Xóa
+                            </button>
+                          </div>
                         )}
                       </td>
                     </tr>
-                    {criteria.length > 0 && (
+                    {/* Chế độ SỬA rubric */}
+                    {editingRubric === a.id ? (
                       <tr>
-                        <td colSpan={5} className="border bg-slate-50 p-2">
-                          <div className="text-xs font-semibold text-slate-600">
-                            Rubric chấm điểm — {a.name}
+                        <td colSpan={5} className="border bg-indigo-50/50 p-3">
+                          <div className="mb-2 flex items-center justify-between">
+                            <span className="text-xs font-semibold text-slate-600">
+                              Sửa rubric — {a.name}
+                            </span>
+                            <button
+                              onClick={() =>
+                                setDraftCriteria([...draftCriteria, { name: "", weight_percent: 0, levels: "" }])
+                              }
+                              className="text-xs text-indigo-600 hover:underline"
+                            >
+                              + Thêm tiêu chí
+                            </button>
                           </div>
-                          <table className="mt-1 w-full text-xs">
-                            <thead>
-                              <tr className="text-slate-500">
-                                <th className="p-1 text-left">Tiêu chí</th>
-                                <th className="p-1">Trọng số</th>
-                                <th className="p-1 text-left">Các mức chất lượng</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {criteria.map((cr: any, i: number) => (
-                                <tr key={i} className="align-top">
-                                  <td className="p-1">{cr.name}</td>
-                                  <td className="p-1 text-center">{cr.weight_percent}%</td>
-                                  <td className="p-1">
-                                    <ul className="list-disc pl-4">
-                                      {(cr.levels || []).map((lv: string, j: number) => (
-                                        <li key={j}>{lv}</li>
-                                      ))}
-                                    </ul>
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
+                          {draftCriteria.map((cr, i) => (
+                            <div key={i} className="mb-2 grid grid-cols-12 gap-2">
+                              <input
+                                className="col-span-4 rounded border p-1 text-xs"
+                                placeholder="Tên tiêu chí"
+                                value={cr.name}
+                                onChange={(e) => {
+                                  const d = [...draftCriteria];
+                                  d[i] = { ...cr, name: e.target.value };
+                                  setDraftCriteria(d);
+                                }}
+                              />
+                              <input
+                                type="number"
+                                className="col-span-2 rounded border p-1 text-xs"
+                                placeholder="Trọng số %"
+                                value={cr.weight_percent}
+                                onChange={(e) => {
+                                  const d = [...draftCriteria];
+                                  d[i] = { ...cr, weight_percent: e.target.value };
+                                  setDraftCriteria(d);
+                                }}
+                              />
+                              <textarea
+                                className="col-span-5 rounded border p-1 text-xs"
+                                placeholder="Các mức chất lượng (mỗi dòng một mức, vd: Giỏi: ...)"
+                                rows={2}
+                                value={cr.levels}
+                                onChange={(e) => {
+                                  const d = [...draftCriteria];
+                                  d[i] = { ...cr, levels: e.target.value };
+                                  setDraftCriteria(d);
+                                }}
+                              />
+                              <button
+                                onClick={() => setDraftCriteria(draftCriteria.filter((_, j) => j !== i))}
+                                className="col-span-1 text-xs text-red-600 hover:underline"
+                              >
+                                Xóa
+                              </button>
+                            </div>
+                          ))}
+                          <div className="mt-2 flex gap-2">
+                            <button
+                              onClick={() => saveRubric(a)}
+                              className="rounded bg-green-600 px-3 py-1 text-xs text-white"
+                            >
+                              Lưu rubric
+                            </button>
+                            <button
+                              onClick={() => {
+                                setEditingRubric(null);
+                                setDraftCriteria([]);
+                              }}
+                              className="rounded bg-slate-100 px-3 py-1 text-xs"
+                            >
+                              Hủy
+                            </button>
+                          </div>
                         </td>
                       </tr>
+                    ) : (
+                      criteria.length > 0 && (
+                        <tr>
+                          <td colSpan={5} className="border bg-slate-50 p-2">
+                            <div className="text-xs font-semibold text-slate-600">
+                              Rubric chấm điểm — {a.name}
+                            </div>
+                            <table className="mt-1 w-full text-xs">
+                              <thead>
+                                <tr className="text-slate-500">
+                                  <th className="p-1 text-left">Tiêu chí</th>
+                                  <th className="p-1">Trọng số</th>
+                                  <th className="p-1 text-left">Các mức chất lượng</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {criteria.map((cr: any, i: number) => (
+                                  <tr key={i} className="align-top">
+                                    <td className="p-1">{cr.name}</td>
+                                    <td className="p-1 text-center">{cr.weight_percent}%</td>
+                                    <td className="p-1">
+                                      <ul className="list-disc pl-4">
+                                        {(cr.levels || []).map((lv: string, j: number) => (
+                                          <li key={j}>{lv}</li>
+                                        ))}
+                                      </ul>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </td>
+                        </tr>
+                      )
                     )}
                   </Fragment>
                 );

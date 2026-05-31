@@ -54,6 +54,10 @@ def outline_to_docx(db: Session, outline_id: int) -> bytes:
     doc.add_heading("2. Chuẩn đầu ra học phần (CLO)", level=2)
     for c in clos:
         doc.add_paragraph(f"{c.code} ({c.bloom_level or '-'}): {c.description}", style="List Bullet")
+        if c.description_en:
+            en = doc.add_paragraph(f"    {c.code} (EN): {c.description_en}")
+            if en.runs:
+                en.runs[0].italic = True
 
     # Ma trận CLO × PLO
     doc.add_heading("3. Ma trận CLO × PLO", level=2)
@@ -88,6 +92,22 @@ def outline_to_docx(db: Session, outline_id: int) -> bytes:
             row[0].text = a.name
             row[1].text = str(a.weight_percent)
             row[2].text = ", ".join(clo_codes)
+
+        # Rubric chi tiết cho từng cấu phần (nếu có).
+        for a in assessments:
+            criteria = (a.rubric_json or {}).get("criteria") or []
+            if not criteria:
+                continue
+            doc.add_heading(f"Rubric — {a.name}", level=3)
+            rt = doc.add_table(rows=1, cols=3)
+            rt.style = "Light Grid Accent 1"
+            h = rt.rows[0].cells
+            h[0].text, h[1].text, h[2].text = "Tiêu chí", "Trọng số (%)", "Các mức chất lượng"
+            for cr in criteria:
+                row = rt.add_row().cells
+                row[0].text = str(cr.get("name", ""))
+                row[1].text = str(cr.get("weight_percent", ""))
+                row[2].text = "\n".join(str(lv) for lv in (cr.get("levels") or []))
 
     # Kế hoạch giảng dạy
     doc.add_heading("5. Kế hoạch giảng dạy", level=2)
