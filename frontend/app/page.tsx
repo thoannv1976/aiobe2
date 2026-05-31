@@ -4,11 +4,11 @@ import Link from "next/link";
 const MODULES: [string, string, string?][] = [
   ["Trích xuất đề án (AI)", "Upload PDF/DOCX → Claude trích xuất PLO/PI/học phần → con người rà soát.", "/extract"],
   ["CTĐT & Chuẩn đầu ra", "Quản lý Program, PLO, PI, học phần, ma trận Học phần×PLO, kiểm tra độ phủ.", "/programs"],
-  ["Đề cương học phần", "CLO, ma trận CLO×PLO, đánh giá + rubric, kế hoạch dạy; kiểm tra alignment; versioning."],
-  ["Giáo trình", "Soạn theo chương gắn CLO; phiên bản; xuất file."],
-  ["Ngân hàng câu hỏi", "CRUD câu hỏi gắn CLO/Bloom/độ khó; thống kê lỗ hổng; ma trận đề thi."],
-  ["Tạo đề thi", "Sinh đề từ ma trận, nhiều mã đề, bảng đặc tả + đáp án; vòng đời duyệt."],
-  ["Lưu trữ & Kiểm định", "Báo cáo phủ chuẩn PLO→PI→CLO→đánh giá; audit log; gói minh chứng AUN-QA."],
+  ["Đề cương học phần", "CLO, ma trận CLO×PLO, đánh giá + rubric, kế hoạch dạy; kiểm tra alignment; versioning.", "/programs"],
+  ["Giáo trình", "Soạn theo chương gắn CLO; phiên bản; gợi ý đề mục bằng AI.", "/programs"],
+  ["Ngân hàng câu hỏi", "CRUD câu hỏi gắn CLO/Bloom/độ khó; thống kê lỗ hổng; ma trận đề thi.", "/programs"],
+  ["Tạo đề thi", "Sinh đề từ ma trận, nhiều mã đề, bảng đặc tả + đáp án; vòng đời duyệt.", "/programs"],
+  ["Lưu trữ & Kiểm định", "Báo cáo phủ chuẩn PLO→PI→CLO→đánh giá; audit log; gói minh chứng AUN-QA.", "/qa"],
 ];
 
 export default function Home() {

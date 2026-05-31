@@ -30,3 +30,6 @@ uploads/
 .DS_Store
 .idea/
 .vscode/
+
+# Next.js / TS build info
+*.tsbuildinfo

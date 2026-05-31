@@ -63,13 +63,16 @@ cd backend && pytest          # logic OBE: alignment, độ phủ PLO, sinh đ�
 | Phase | Nội dung | Trạng thái |
 |---|---|---|
 | 0 | Khởi tạo: monorepo, Docker Compose, schema + migration, auth + RBAC, layout | ✅ |
-| 1 | CTĐT & chuẩn đầu ra: CRUD Program/PLO/PI/Course, ma trận Học phần×PLO, kiểm tra độ phủ | ✅ |
-| 2 | Trích xuất đề án (AI): upload → trích văn bản → Claude ra JSON → rà soát/xác nhận → ghi CSDL | ✅ API (human-in-the-loop) |
-| 3 | Đề cương: CLO, ma trận CLO×PLO, đánh giá+rubric, kế hoạch dạy, alignment, versioning, vòng đời | ✅ |
-| 4 | Giáo trình: chương gắn CLO, phiên bản | ✅ API |
-| 5 | Ngân hàng câu hỏi & ma trận: CRUD, import/export CSV, thống kê phủ | ✅ |
-| 6 | Tạo đề thi: sinh từ ma trận, nhiều mã đề, bảng đặc tả + đáp án, vòng đời duyệt | ✅ |
-| 7 | Lưu trữ & kiểm định: báo cáo phủ chuẩn, audit log, gói minh chứng (zip) | ✅ |
+| 1 | CTĐT & chuẩn đầu ra: CRUD Program/PLO/PI/Course, ma trận Học phần×PLO, kiểm tra độ phủ | ✅ API + UI |
+| 2 | Trích xuất đề án (AI): upload → trích văn bản (+OCR scan) → Claude ra JSON → rà soát/xác nhận → ghi CSDL | ✅ API + UI (human-in-the-loop) |
+| 3 | Đề cương: CLO, ma trận CLO×PLO, đánh giá+rubric, kế hoạch dạy, alignment, versioning, diff, vòng đời, xuất DOCX | ✅ API + UI |
+| 4 | Giáo trình: chương gắn CLO, phiên bản, gợi ý đề mục bằng AI | ✅ API + UI |
+| 5 | Ngân hàng câu hỏi & ma trận: CRUD, import/export CSV+Excel, thống kê phủ, dựng ma trận | ✅ API + UI |
+| 6 | Tạo đề thi: sinh từ ma trận, nhiều mã đề, chỉnh tay (khóa/thay câu), bảng đặc tả + đáp án, vòng đời, xuất DOCX | ✅ API + UI |
+| 7 | Lưu trữ & kiểm định: báo cáo phủ chuẩn, kho minh chứng, audit log, gói minh chứng (zip) | ✅ API + UI |
+
+### Màn hình frontend
+`/` tổng quan · `/login` · `/extract` (trích xuất AI) · `/programs` + `/programs/[id]` (ma trận Học phần×PLO, báo cáo phủ chuẩn) · `/outlines/[id]` (soạn đề cương: CLO, ma trận CLO×PLO, đánh giá, kế hoạch dạy, alignment, vòng đời, xuất DOCX) · `/courses/[id]` · `/courses/[id]/questions` (ngân hàng câu hỏi + ma trận đề) · `/courses/[id]/textbooks` (giáo trình + gợi ý AI) · `/exams/[id]` (chỉnh tay đề, bảng đặc tả, xuất DOCX) · `/qa` (kiểm định/ĐBCL) · `/admin` (người dùng + phân công).
 
 ### Các điểm OBE đã hiện thực & có test
 - **Alignment đề cương**: mỗi CLO ánh xạ ≥1 PLO; mỗi CLO được ≥1 cấu phần đánh giá; tổng trọng số = 100%; cảnh báo CLO không được dạy. Bắt buộc đạt trước khi *Approve*.
@@ -78,6 +81,6 @@ cd backend && pytest          # logic OBE: alignment, độ phủ PLO, sinh đ�
 - **Báo cáo phủ chuẩn**: PLO→PI→CLO→đánh giá, liệt kê lỗ hổng.
 
 ## Hướng phát triển tiếp
-- OCR Tesseract cho PDF scan; màn hình rà soát trích xuất song song văn bản gốc (Phase 2 UI).
-- Rich-text editor (Tiptap) cho giáo trình; xuất DOCX/PDF (skill docx/pdf).
-- Lưu file lên MinIO thay vì cục bộ; diff phiên bản trực quan.
+- Rich-text editor (Tiptap) thay textarea cho giáo trình; xuất PDF (hiện có DOCX).
+- Lưu file upload lên MinIO/GCS thay vì cục bộ (bền vững trên Cloud Run); diff phiên bản trực quan hơn.
+- UI rà soát trích xuất hiển thị ánh xạ vị trí trong văn bản gốc.

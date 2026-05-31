@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useParams } from "next/navigation";
 import { api } from "@/lib/api";
 
@@ -33,6 +34,19 @@ export default function CourseDetail() {
     load();
   }, [id]);
 
+  async function createOutline() {
+    setErr("");
+    try {
+      const o = await api(`/api/outlines`, {
+        method: "POST",
+        body: JSON.stringify({ course_id: Number(id), description: "", general_info_json: {}, teaching_methods_json: [], references_json: [] }),
+      });
+      window.location.href = `/outlines/${o.id}`;
+    } catch (e: any) {
+      setErr(e.message);
+    }
+  }
+
   async function generate(matrixId: number) {
     setErr("");
     try {
@@ -51,14 +65,35 @@ export default function CourseDetail() {
       <h1 className="text-2xl font-bold">Học phần #{id}</h1>
       {err && <p className="text-sm text-red-600">{err}</p>}
 
+      {/* Điều hướng nhanh các module của học phần */}
+      <div className="flex flex-wrap gap-2 text-sm">
+        <Link href={`/courses/${id}/questions`} className="rounded bg-indigo-600 px-3 py-1.5 text-white">
+          Ngân hàng câu hỏi & ma trận →
+        </Link>
+        <Link href={`/courses/${id}/textbooks`} className="rounded border border-indigo-600 px-3 py-1.5 text-indigo-700">
+          Giáo trình →
+        </Link>
+      </div>
+
       {/* Đề cương + alignment */}
       <section>
-        <h2 className="mb-2 text-lg font-semibold">Đề cương & kiểm tra Alignment</h2>
+        <div className="mb-2 flex items-center justify-between">
+          <h2 className="text-lg font-semibold">Đề cương & kiểm tra Alignment</h2>
+          <button
+            onClick={createOutline}
+            className="rounded bg-indigo-600 px-3 py-1 text-sm text-white"
+          >
+            + Tạo đề cương
+          </button>
+        </div>
         {outlines.map((o) => {
           const a = alignment[o.id];
           return (
             <div key={o.id} className="mb-2 rounded border bg-white p-3 text-sm">
-              <b>Phiên bản v{o.version}</b> — trạng thái: {o.status}
+              <Link href={`/outlines/${o.id}`} className="font-semibold text-indigo-700">
+                Phiên bản v{o.version}
+              </Link>{" "}
+              — trạng thái: {o.status}
               {a && (
                 <div
                   className={`mt-1 rounded p-2 ${
@@ -158,12 +193,17 @@ export default function CourseDetail() {
               <span>
                 <b>{e.name}</b> v{e.version} — {e.total_points} điểm — {e.status}
               </span>
-              <button
-                onClick={async () => setBlueprint(await api(`/api/exams/${e.id}/blueprint`))}
-                className="rounded bg-slate-100 px-3 py-1 hover:bg-slate-200"
-              >
-                Bảng đặc tả
-              </button>
+              <div className="flex gap-2">
+                <Link href={`/exams/${e.id}`} className="rounded bg-indigo-600 px-3 py-1 text-white">
+                  Mở đề / chỉnh sửa →
+                </Link>
+                <button
+                  onClick={async () => setBlueprint(await api(`/api/exams/${e.id}/blueprint`))}
+                  className="rounded bg-slate-100 px-3 py-1 hover:bg-slate-200"
+                >
+                  Bảng đặc tả
+                </button>
+              </div>
             </div>
           </div>
         ))}
