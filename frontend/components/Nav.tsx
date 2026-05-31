@@ -16,6 +16,7 @@ export default function Nav() {
           OBE / AUN-QA
         </Link>
         <nav className="flex items-center gap-4 text-sm">
+          <Link href="/extract" className="hover:text-indigo-700">Trích xuất AI</Link>
           <Link href="/programs" className="hover:text-indigo-700">CTĐT</Link>
           {user ? (
             <>

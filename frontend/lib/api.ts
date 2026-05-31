@@ -45,8 +45,20 @@ export async function api(path: string, opts: RequestInit = {}) {
   return handle(res);
 }
 
-export async function login(email: string, password: string) {
-  const body = new URLSearchParams({ username: email, password });
+// Upload multipart/form-data: KHÔNG set Content-Type để browser tự thêm boundary.
+export async function apiUpload(path: string, formData: FormData) {
+  const token = getToken();
+  const headers: Record<string, string> = {};
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    headers,
+    body: formData,
+  });
+  return handle(res);
+}
+
+export async function login(email: string, password: string) {  const body = new URLSearchParams({ username: email, password });
   const res = await fetch(`${API_BASE}/api/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
