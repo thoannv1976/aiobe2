@@ -19,6 +19,7 @@ from app.models import (
     CourseOutline,
     Exam,
     ExamQuestion,
+    Lecture,
     LessonPlan,
     LessonPlanClo,
     Plo,
@@ -130,13 +131,61 @@ def outline_to_docx(db: Session, outline_id: int) -> bytes:
             row[1].text = lp.topic
             row[2].text = ", ".join(clo_codes)
 
+    # Ma trận 2: CLO – nội dung giảng dạy – đánh giá (SPEC 8.2)
+    # (Nội dung/PPGD lấy từ các buổi dạy gắn CLO; đánh giá lấy từ cấu phần gắn CLO.)
+    assess_by_clo: dict[int, list[str]] = {}
+    for a in assessments:
+        for ac in db.query(AssessmentClo).filter(AssessmentClo.assessment_id == a.id).all():
+            assess_by_clo.setdefault(ac.clo_id, []).append(a.name)
+    topics_by_clo: dict[int, list[str]] = {}
+    for lp in lessons:
+        for lc in db.query(LessonPlanClo).filter(LessonPlanClo.lesson_plan_id == lp.id).all():
+            topics_by_clo.setdefault(lc.clo_id, []).append(lp.topic)
+    if clos:
+        doc.add_heading("6. Ma trận CLO – Nội dung – Đánh giá", level=2)
+        m2 = doc.add_table(rows=1, cols=3)
+        m2.style = "Light Grid Accent 1"
+        h = m2.rows[0].cells
+        h[0].text, h[1].text, h[2].text = "CLO", "Nội dung giảng dạy", "Hình thức đánh giá"
+        for c in clos:
+            row = m2.add_row().cells
+            row[0].text = c.code
+            row[1].text = "; ".join(topics_by_clo.get(c.id, [])) or "—"
+            row[2].text = ", ".join(assess_by_clo.get(c.id, [])) or "—"
+
+    # Ma trận 3: CLO – thành phần đánh giá (tỷ trọng %) (SPEC 8.3)
+    if clos and assessments:
+        doc.add_heading("7. Ma trận CLO – Thành phần đánh giá (tỷ trọng %)", level=2)
+        # phân bổ đều trọng số mỗi cấu phần cho các CLO mà nó đánh giá
+        a_clos: dict[int, list[int]] = {}
+        for a in assessments:
+            ids = [ac.clo_id for ac in db.query(AssessmentClo).filter(AssessmentClo.assessment_id == a.id).all()]
+            a_clos[a.id] = ids
+        m3 = doc.add_table(rows=1, cols=len(assessments) + 2)
+        m3.style = "Light Grid Accent 1"
+        hdr = m3.rows[0].cells
+        hdr[0].text = "CLO"
+        for j, a in enumerate(assessments):
+            hdr[j + 1].text = f"{a.name} ({a.weight_percent}%)"
+        hdr[-1].text = "Tổng"
+        for c in clos:
+            row = m3.add_row().cells
+            row[0].text = c.code
+            total = 0.0
+            for j, a in enumerate(assessments):
+                ids = a_clos.get(a.id, [])
+                share = round(a.weight_percent / len(ids), 1) if (ids and c.id in ids) else 0
+                row[j + 1].text = f"{share}%" if share else ""
+                total += share
+            row[-1].text = f"{round(total, 1)}%"
+
     # Phương pháp dạy-học & tài liệu
     if outline.teaching_methods_json:
-        doc.add_heading("6. Phương pháp dạy-học", level=2)
+        doc.add_heading("8. Phương pháp dạy-học", level=2)
         for m in outline.teaching_methods_json:
             doc.add_paragraph(str(m), style="List Bullet")
     if outline.references_json:
-        doc.add_heading("7. Tài liệu tham khảo", level=2)
+        doc.add_heading("9. Tài liệu tham khảo", level=2)
         for r in outline.references_json:
             doc.add_paragraph(str(r), style="List Number")
 
@@ -307,3 +356,68 @@ def textbook_to_pdf(db: Session, textbook_id: int) -> bytes:
 
     out = pdf.output()
     return bytes(out)
+
+
+# ---------------------------------------------------------------------------
+# Bài giảng (SPEC mục 10): xuất DOCX nội dung + PPTX slide
+# ---------------------------------------------------------------------------
+def lecture_to_docx(db: Session, lecture_id: int) -> bytes:
+    lec = db.get(Lecture, lecture_id)
+    if not lec:
+        raise ValueError("Không tìm thấy bài giảng")
+    course = db.get(Course, lec.course_id)
+    doc = _new_doc()
+    doc.add_heading(f"Buổi {lec.session_no}. {lec.title}", level=0)
+    if course:
+        doc.add_paragraph(f"Học phần: {course.code} — {course.name}")
+    if lec.clo_codes_json:
+        doc.add_paragraph(f"CLO: {', '.join(lec.clo_codes_json)}")
+    for kind, txt in _md_lines(lec.content_richtext or ""):
+        if kind == "h2":
+            doc.add_heading(txt, level=2)
+        elif kind == "h3":
+            doc.add_heading(txt, level=3)
+        elif kind == "bullet":
+            doc.add_paragraph(txt, style="List Bullet")
+        else:
+            doc.add_paragraph(txt)
+    buf = io.BytesIO()
+    doc.save(buf)
+    buf.seek(0)
+    return buf.read()
+
+
+def lecture_to_pptx(db: Session, lecture_id: int) -> bytes:
+    """Xuất slide bài giảng ra PowerPoint (SPEC 21 — đầu ra PowerPoint)."""
+    from pptx import Presentation
+    from pptx.util import Pt as PptPt
+
+    lec = db.get(Lecture, lecture_id)
+    if not lec:
+        raise ValueError("Không tìm thấy bài giảng")
+    course = db.get(Course, lec.course_id)
+
+    prs = Presentation()
+    # Slide tiêu đề
+    title_layout = prs.slide_layouts[0]
+    s = prs.slides.add_slide(title_layout)
+    s.shapes.title.text = lec.title
+    if s.placeholders and len(s.placeholders) > 1:
+        s.placeholders[1].text = f"{course.code} — {course.name}" if course else ""
+
+    bullet_layout = prs.slide_layouts[1]
+    for sl in (lec.slides_json or []):
+        slide = prs.slides.add_slide(bullet_layout)
+        slide.shapes.title.text = str(sl.get("title", ""))
+        body = slide.placeholders[1].text_frame
+        body.clear()
+        bullets = sl.get("bullets", []) or []
+        for i, b in enumerate(bullets):
+            p = body.paragraphs[0] if i == 0 else body.add_paragraph()
+            p.text = str(b)
+            p.font.size = PptPt(18)
+
+    buf = io.BytesIO()
+    prs.save(buf)
+    buf.seek(0)
+    return buf.read()

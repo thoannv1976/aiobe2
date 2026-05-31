@@ -431,3 +431,17 @@ class ApiKey(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
 
+
+class Lecture(Base):
+    """Bài giảng theo buổi, gắn học phần (SPEC mục 10). Nội dung Markdown do AI/giảng viên soạn."""
+    __tablename__ = "lectures"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    course_id: Mapped[int] = mapped_column(ForeignKey("courses.id", ondelete="CASCADE"))
+    session_no: Mapped[int] = mapped_column(Integer, default=1)  # buổi học
+    title: Mapped[str] = mapped_column(String(500))
+    content_richtext: Mapped[str | None] = mapped_column(Text, nullable=True)  # nội dung bài giảng
+    slides_json: Mapped[list] = mapped_column(JSON, default=list)  # danh sách slide [{title, bullets}]
+    clo_codes_json: Mapped[list] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+

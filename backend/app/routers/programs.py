@@ -178,3 +178,23 @@ def program_coverage(
 ):
     """Kiểm tra mỗi PLO có học phần Master (M) — SPEC 4.2."""
     return check_program_plo_coverage(db, program_id).to_dict()
+
+
+# --------------------------- AI: chuẩn hóa PLO (SPEC bước 2) ---------------------------
+@router.post("/programs/{program_id}/review-plos")
+def review_plos(program_id: int, db: Session = Depends(get_db), _: User = Depends(MANAGER)):
+    """AI rà soát & chuẩn hóa PLO: đo được không, Bloom, gợi ý viết lại (SPEC mục 14)."""
+    from app.services.qa_review import review_plos_ai
+
+    if not db.get(Program, program_id):
+        raise HTTPException(404, "Không tìm thấy CTĐT")
+    plos = db.query(Plo).filter(Plo.program_id == program_id).all()
+    if not plos:
+        raise HTTPException(400, "Chương trình chưa có PLO để rà soát")
+    try:
+        return review_plos_ai(
+            [{"code": p.code, "description": p.description,
+              "category": p.category or "", "bloom_level": p.bloom_level or ""} for p in plos]
+        )
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(400, f"Rà soát PLO thất bại: {e}")

@@ -32,6 +32,7 @@ from app.models.tables import (  # noqa: F401
     Extraction,
     LessonPlan,
     LessonPlanClo,
+    Lecture,
     Pi,
     Plo,
     Program,

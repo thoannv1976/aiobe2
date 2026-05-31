@@ -515,3 +515,46 @@ def export_outline(outline_id: int, db: Session = Depends(get_db), _: User = Dep
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         headers={"Content-Disposition": f"attachment; filename=de_cuong_{outline_id}.docx"},
     )
+
+
+@router.get("/outlines/{outline_id}/qa-review")
+def qa_review_outline(outline_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+    """AI kiểm tra chất lượng đề cương: CLO đo được, alignment, đánh giá (SPEC mục 14)."""
+    from app.services.qa_review import review_outline_ai
+
+    outline = db.get(CourseOutline, outline_id)
+    if not outline:
+        raise HTTPException(404, "Không tìm thấy đề cương")
+    course = db.get(Course, outline.course_id)
+    clos = db.query(Clo).filter(Clo.outline_id == outline_id).all()
+    clo_by_id = {c.id: c for c in clos}
+    # PLO codes cho mỗi CLO
+    plo_map: dict[int, list[str]] = {c.id: [] for c in clos}
+    for cp in db.query(CloPlo).filter(CloPlo.clo_id.in_([c.id for c in clos] or [-1])).all():
+        plo = db.get(Plo, cp.plo_id)
+        if cp.clo_id in plo_map and plo:
+            plo_map[cp.clo_id].append(plo.code)
+    clo_payload = [
+        {"code": c.code, "description": c.description, "bloom_level": c.bloom_level or "",
+         "plos": plo_map.get(c.id, [])}
+        for c in clos
+    ]
+    assessments = []
+    for a in db.query(Assessment).filter(Assessment.outline_id == outline_id).all():
+        codes = [clo_by_id[ac.clo_id].code
+                 for ac in db.query(AssessmentClo).filter(AssessmentClo.assessment_id == a.id).all()
+                 if ac.clo_id in clo_by_id]
+        assessments.append({"name": a.name, "weight": a.weight_percent, "clos": codes})
+    lessons = []
+    for lp in db.query(LessonPlan).filter(LessonPlan.outline_id == outline_id).all():
+        codes = [clo_by_id[lc.clo_id].code
+                 for lc in db.query(LessonPlanClo).filter(LessonPlanClo.lesson_plan_id == lp.id).all()
+                 if lc.clo_id in clo_by_id]
+        lessons.append({"topic": lp.topic, "clos": codes})
+    try:
+        return review_outline_ai({
+            "course": {"code": course.code if course else "", "name": course.name if course else ""},
+            "clos": clo_payload, "assessments": assessments, "lessons": lessons,
+        })
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(400, f"Kiểm tra chất lượng thất bại: {e}")

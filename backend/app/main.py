@@ -10,6 +10,7 @@ from app.routers import (
     auth,
     exams,
     extraction,
+    lectures,
     outlines,
     programs,
     questions,
@@ -27,7 +28,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-for r in (auth, programs, outlines, textbooks, questions, exams, extraction, reports, assignments, apikeys):
+for r in (auth, programs, outlines, textbooks, questions, exams, extraction, reports, assignments, apikeys, lectures):
     app.include_router(r.router)
 
 
