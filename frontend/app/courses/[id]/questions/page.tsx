@@ -194,6 +194,52 @@ export default function QuestionsPage() {
     }
   }
 
+  // ----- Chỉnh sửa ma trận (kể cả ma trận do AI sinh) -----
+  const [editMatrixId, setEditMatrixId] = useState<number | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editPoints, setEditPoints] = useState<number>(10);
+  const [editCells, setEditCells] = useState<MatrixCell[]>([]);
+
+  function openMatrixEditor(m: Matrix) {
+    setEditMatrixId(m.id);
+    setEditName(m.name);
+    setEditPoints(m.total_points ?? 10);
+    setEditCells(
+      m.cells.map((c) => ({
+        clo_id: c.clo_id,
+        bloom_level: c.bloom_level,
+        difficulty: c.difficulty,
+        count: c.count,
+        points_each: c.points_each,
+      }))
+    );
+  }
+
+  async function saveMatrixEdit() {
+    if (editMatrixId == null) return;
+    setErr("");
+    try {
+      await api(`/api/matrices/${editMatrixId}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          name: editName,
+          total_points: Number(editPoints) || 10,
+          cells: editCells.map((c) => ({
+            clo_id: c.clo_id != null ? Number(c.clo_id) : null,
+            bloom_level: c.bloom_level,
+            difficulty: c.difficulty,
+            count: Number(c.count) || 0,
+            points_each: Number(c.points_each) || 0,
+          })),
+        }),
+      });
+      setEditMatrixId(null);
+      setMatrices(await api(`/api/courses/${id}/matrices`));
+    } catch (e: any) {
+      setErr(e.message);
+    }
+  }
+
   const [file, setFile] = useState<File | null>(null);
 
   // Sinh câu hỏi bằng AI
@@ -928,6 +974,9 @@ export default function QuestionsPage() {
                   <div className="flex flex-wrap gap-1">
                     <button onClick={() => loadSummary(m.id)} className="rounded bg-indigo-100 px-2 py-1 text-xs text-indigo-700 hover:bg-indigo-200">Tỷ trọng & cảnh báo</button>
                     <button onClick={() => loadCoverage(m.id)} className="rounded bg-indigo-100 px-2 py-1 text-xs text-indigo-700 hover:bg-indigo-200">Độ phủ ngân hàng</button>
+                    {st !== "approved" && st !== "archived" && (
+                      <button onClick={() => openMatrixEditor(m)} className="rounded bg-amber-100 px-2 py-1 text-xs text-amber-700 hover:bg-amber-200">Sửa</button>
+                    )}
                     {next[st] && (
                       <button onClick={() => changeMatrixStatus(m.id, next[st])} className="rounded bg-slate-100 px-2 py-1 text-xs hover:bg-slate-200">
                         → {STATUS_VI[next[st]]}
@@ -937,6 +986,67 @@ export default function QuestionsPage() {
                     <button onClick={() => deleteMatrix(m.id)} className="rounded bg-red-100 px-2 py-1 text-xs text-red-700 hover:bg-red-200">Xóa</button>
                   </div>
                 </div>
+
+                {/* Trình sửa ma trận inline (kể cả ma trận do AI sinh) */}
+                {editMatrixId === m.id && (
+                  <div className="mt-3 rounded border border-amber-200 bg-amber-50/40 p-3 text-xs">
+                    <div className="mb-2 flex flex-wrap items-end gap-2">
+                      <label>Tên ma trận
+                        <input value={editName} onChange={(e) => setEditName(e.target.value)} className="ml-1 rounded border p-1" />
+                      </label>
+                      <label>Tổng điểm
+                        <input type="number" value={editPoints} onChange={(e) => setEditPoints(Number(e.target.value) || 10)} className="ml-1 w-20 rounded border p-1" />
+                      </label>
+                    </div>
+                    <table className="w-full">
+                      <thead>
+                        <tr className="bg-slate-100">
+                          <th className="border p-1">CLO</th><th className="border p-1">Bloom</th>
+                          <th className="border p-1">Độ khó</th><th className="border p-1">Số câu</th>
+                          <th className="border p-1">Điểm/câu</th><th className="border p-1"></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {editCells.map((c, i) => (
+                          <tr key={i}>
+                            <td className="border p-1">
+                              <select value={c.clo_id ?? ""} onChange={(e) => {
+                                const v = [...editCells]; v[i] = { ...c, clo_id: e.target.value ? Number(e.target.value) : null }; setEditCells(v);
+                              }} className="rounded border p-1">
+                                <option value="">—</option>
+                                {clos.map((cl) => <option key={cl.id} value={cl.id}>{cl.code}</option>)}
+                              </select>
+                            </td>
+                            <td className="border p-1">
+                              <select value={c.bloom_level} onChange={(e) => { const v = [...editCells]; v[i] = { ...c, bloom_level: e.target.value }; setEditCells(v); }} className="rounded border p-1">
+                                {Object.entries(BLOOM).map(([k, vi]) => <option key={k} value={k}>{vi}</option>)}
+                              </select>
+                            </td>
+                            <td className="border p-1">
+                              <select value={c.difficulty} onChange={(e) => { const v = [...editCells]; v[i] = { ...c, difficulty: e.target.value }; setEditCells(v); }} className="rounded border p-1">
+                                {Object.entries(DIFFICULTY).map(([k, vi]) => <option key={k} value={k}>{vi}</option>)}
+                              </select>
+                            </td>
+                            <td className="border p-1">
+                              <input type="number" value={c.count} onChange={(e) => { const v = [...editCells]; v[i] = { ...c, count: Number(e.target.value) || 0 }; setEditCells(v); }} className="w-16 rounded border p-1" />
+                            </td>
+                            <td className="border p-1">
+                              <input type="number" value={c.points_each ?? 0} onChange={(e) => { const v = [...editCells]; v[i] = { ...c, points_each: Number(e.target.value) || 0 }; setEditCells(v); }} className="w-16 rounded border p-1" />
+                            </td>
+                            <td className="border p-1 text-center">
+                              <button onClick={() => setEditCells(editCells.filter((_, j) => j !== i))} className="text-red-600 hover:underline">Bớt</button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    <div className="mt-2 flex gap-2">
+                      <button onClick={() => setEditCells([...editCells, { clo_id: null, bloom_level: "remember", difficulty: "easy", count: 1, points_each: 1 }])} className="rounded bg-slate-100 px-3 py-1 hover:bg-slate-200">+ Thêm dòng</button>
+                      <button onClick={saveMatrixEdit} className="rounded bg-green-600 px-3 py-1 text-white">Lưu</button>
+                      <button onClick={() => setEditMatrixId(null)} className="rounded bg-slate-100 px-3 py-1">Hủy</button>
+                    </div>
+                  </div>
+                )}
                 {sm && (
                   <div className="mt-3 rounded bg-slate-50 p-3 text-xs">
                     <div className="mb-1">
