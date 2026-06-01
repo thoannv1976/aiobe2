@@ -40,3 +40,47 @@ def test_missing_clo_is_error():
     r = matrix_summary(cells, declared_points=10)
     assert not r["ok"]
     assert any("thiếu CLO" in e for e in r["errors"])
+
+
+from app.services.matrix_summary import rebalance_points
+
+
+def _total(cells):
+    return round(sum(int(c["count"]) * c["points_each"] for c in cells), 2)
+
+
+def test_rebalance_scales_to_target():
+    cells = [
+        {"clo_id": 1, "bloom_level": "remember", "difficulty": "easy", "count": 5, "points_each": 1.0},
+        {"clo_id": 2, "bloom_level": "apply", "difficulty": "medium", "count": 5, "points_each": 3.0},
+        {"clo_id": 3, "bloom_level": "analyze", "difficulty": "hard", "count": 2, "points_each": 4.0},
+    ]
+    out = rebalance_points(cells, 100)
+    assert _total(out) == 100.0
+
+
+def test_rebalance_exact_with_single_cell():
+    cells = [
+        {"clo_id": 1, "bloom_level": "remember", "difficulty": "easy", "count": 3, "points_each": 1.0},
+        {"clo_id": 2, "bloom_level": "apply", "difficulty": "medium", "count": 1, "points_each": 2.0},
+    ]
+    out = rebalance_points(cells, 10)
+    assert _total(out) == 10.0
+
+
+def test_rebalance_zero_points_divides_evenly():
+    cells = [
+        {"clo_id": 1, "bloom_level": "remember", "difficulty": "easy", "count": 4, "points_each": 0},
+        {"clo_id": 2, "bloom_level": "apply", "difficulty": "medium", "count": 1, "points_each": 0},
+    ]
+    out = rebalance_points(cells, 10)
+    assert _total(out) == 10.0
+
+
+def test_rebalance_target_10_scale():
+    cells = [
+        {"clo_id": 1, "bloom_level": "remember", "difficulty": "easy", "count": 20, "points_each": 0.5},
+        {"clo_id": 2, "bloom_level": "essay", "difficulty": "hard", "count": 2, "points_each": 2.5},
+    ]
+    out = rebalance_points(cells, 10)
+    assert _total(out) == 10.0

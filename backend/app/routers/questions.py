@@ -572,6 +572,10 @@ def optimize_matrix(mid: int, db: Session = Depends(get_db), user: User = Depend
         })
     if not cells:
         raise HTTPException(400, "AI không tạo được ô khả thi từ ngân hàng Đã duyệt.")
+    # LLM hay tính sai số học -> CÂN LẠI điểm/câu để tổng = đúng thang điểm (deterministic).
+    from app.services.matrix_summary import rebalance_points
+
+    cells = rebalance_points(cells, m.total_points)
     m.cells_json = cells
     if res.get("name"):
         m.name = res["name"]
@@ -701,6 +705,10 @@ def generate_matrix(
         })
     if not cells:
         raise HTTPException(400, "AI không tạo được ô khả thi từ ngân hàng hiện có.")
+    # Cân lại điểm/câu để tổng = đúng thang điểm khai báo.
+    from app.services.matrix_summary import rebalance_points
+
+    cells = rebalance_points(cells, payload.total_points)
 
     obj = ExamMatrix(
         course_id=course_id, name=gen["name"], cells_json=cells,

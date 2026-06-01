@@ -8,6 +8,43 @@ from __future__ import annotations
 LOW_BLOOM = {"remember", "understand"}
 
 
+def rebalance_points(cells: list[dict], target_points: float, decimals: int = 2) -> list[dict]:
+    """Cân lại điểm/câu để TỔNG ĐIỂM = đúng target_points (deterministic).
+
+    LLM thường tính sai số học, nên sau khi AI trả ma trận ta tự cân lại:
+    giữ nguyên TỶ LỆ điểm tương đối giữa các ô, scale để tổng khớp thang điểm,
+    rồi bù phần dư làm tròn vào ô có nhiều câu nhất.
+    """
+    rows = [c for c in cells if int(c.get("count", 0) or 0) > 0]
+    if not rows or target_points <= 0:
+        return cells
+
+    total_q = sum(int(c["count"]) for c in rows)
+    cur_total = sum(int(c["count"]) * float(c.get("points_each") or 0) for c in rows)
+
+    if cur_total > 0:
+        scale = target_points / cur_total
+        for c in rows:
+            c["points_each"] = round(float(c.get("points_each") or 0) * scale, decimals)
+    else:
+        # chưa có điểm — chia đều theo số câu
+        per = round(target_points / total_q, decimals)
+        for c in rows:
+            c["points_each"] = per
+
+    # Bù phần lệch để TỔNG khớp CHÍNH XÁC: chọn một ô "điều chỉnh" và đặt điểm/câu của
+    # nó = (target − tổng các ô còn lại) / count, KHÔNG làm tròn ô này -> tổng khớp tuyệt đối.
+    # Ưu tiên ô count=1 (điểm/câu vẫn đẹp); nếu không có thì chọn ô count nhỏ nhất.
+    adj_cell = min(
+        rows, key=lambda c: (int(c["count"]) != 1, int(c["count"]))
+    )
+    others = round(
+        sum(int(c["count"]) * c["points_each"] for c in rows if c is not adj_cell), decimals
+    )
+    adj_cell["points_each"] = round((target_points - others) / int(adj_cell["count"]), decimals + 2)
+    return cells
+
+
 def matrix_summary(cells: list[dict], declared_points: float = 10) -> dict:
     """Tính tổng câu/điểm, tỷ trọng theo CLO & Bloom, và cảnh báo.
 
