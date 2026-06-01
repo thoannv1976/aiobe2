@@ -271,12 +271,24 @@ async def import_csv(
 
 
 # --------------------------- Exam matrices ---------------------------
+MATRIX_TRANSITIONS = {
+    "draft": {"review"},
+    "review": {"approved", "draft"},
+    "approved": {"archived", "draft"},
+    "archived": set(),
+}
+
+
+def _matrix_out(m: ExamMatrix) -> ExamMatrixOut:
+    return ExamMatrixOut(
+        id=m.id, course_id=m.course_id, name=m.name, cells=m.cells_json,
+        status=m.status, total_points=m.total_points,
+    )
+
+
 @router.get("/courses/{course_id}/matrices", response_model=list[ExamMatrixOut])
 def list_matrices(course_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
-    out = []
-    for m in db.query(ExamMatrix).filter(ExamMatrix.course_id == course_id).all():
-        out.append(ExamMatrixOut(id=m.id, course_id=m.course_id, name=m.name, cells=m.cells_json))
-    return out
+    return [_matrix_out(m) for m in db.query(ExamMatrix).filter(ExamMatrix.course_id == course_id).all()]
 
 
 @router.post("/courses/{course_id}/matrices", response_model=ExamMatrixOut, status_code=201)
@@ -288,12 +300,94 @@ def create_matrix(
     obj = ExamMatrix(
         course_id=course_id, name=payload.name,
         cells_json=[c.model_dump() for c in payload.cells],
+        total_points=payload.total_points, created_by=user.id,
     )
     db.add(obj)
     db.commit()
     db.refresh(obj)
     log_action(db, user.id, "exam_matrix", obj.id, "create")
-    return ExamMatrixOut(id=obj.id, course_id=course_id, name=obj.name, cells=obj.cells_json)
+    return _matrix_out(obj)
+
+
+@router.get("/matrices/{mid}/summary")
+def matrix_summary_endpoint(mid: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+    """Tỷ trọng CLO/Bloom + cảnh báo của ma trận."""
+    from app.services.matrix_summary import matrix_summary
+
+    m = db.get(ExamMatrix, mid)
+    if not m:
+        raise HTTPException(404, "Không tìm thấy ma trận")
+    return matrix_summary(m.cells_json, m.total_points)
+
+
+@router.put("/matrices/{mid}", response_model=ExamMatrixOut)
+def update_matrix(mid: int, payload: ExamMatrixCreate, db: Session = Depends(get_db), user: User = Depends(LECTURER)):
+    m = db.get(ExamMatrix, mid)
+    if not m:
+        raise HTTPException(404, "Không tìm thấy ma trận")
+    if m.status in ("approved", "archived"):
+        raise HTTPException(400, "Ma trận đã duyệt/lưu trữ — không sửa được. Hãy nhân bản để chỉnh.")
+    m.name = payload.name
+    m.cells_json = [c.model_dump() for c in payload.cells]
+    m.total_points = payload.total_points
+    db.commit()
+    db.refresh(m)
+    log_action(db, user.id, "exam_matrix", mid, "update")
+    return _matrix_out(m)
+
+
+@router.post("/matrices/{mid}/status", response_model=ExamMatrixOut)
+def matrix_change_status(mid: int, to: str, db: Session = Depends(get_db), user: User = Depends(LECTURER)):
+    """Chuyển vòng đời ma trận: draft→review→approved→archived."""
+    m = db.get(ExamMatrix, mid)
+    if not m:
+        raise HTTPException(404, "Không tìm thấy ma trận")
+    if to not in MATRIX_TRANSITIONS.get(m.status, set()):
+        raise HTTPException(400, f"Không thể chuyển {m.status} → {to}")
+    if to == "approved":
+        if user.role not in (Role.PROGRAM_MANAGER.value, Role.ADMIN.value):
+            raise HTTPException(403, "Chỉ quản lý mới được duyệt ma trận")
+        from app.services.matrix_summary import matrix_summary
+
+        res = matrix_summary(m.cells_json, m.total_points)
+        if not res["ok"]:
+            raise HTTPException(400, f"Ma trận chưa hợp lệ để duyệt: {res['errors']}")
+        m.approved_by = user.id
+    prev = m.status
+    m.status = to
+    db.commit()
+    db.refresh(m)
+    log_action(db, user.id, "exam_matrix", mid, "status", {"from": prev, "to": to})
+    return _matrix_out(m)
+
+
+@router.post("/matrices/{mid}/duplicate", response_model=ExamMatrixOut, status_code=201)
+def duplicate_matrix(mid: int, db: Session = Depends(get_db), user: User = Depends(LECTURER)):
+    m = db.get(ExamMatrix, mid)
+    if not m:
+        raise HTTPException(404, "Không tìm thấy ma trận")
+    dup = ExamMatrix(
+        course_id=m.course_id, name=f"{m.name} (bản sao)",
+        cells_json=list(m.cells_json), total_points=m.total_points,
+        status="draft", created_by=user.id,
+    )
+    db.add(dup)
+    db.commit()
+    db.refresh(dup)
+    log_action(db, user.id, "exam_matrix", dup.id, "duplicate", {"from": mid})
+    return _matrix_out(dup)
+
+
+@router.delete("/matrices/{mid}", status_code=204)
+def delete_matrix(mid: int, db: Session = Depends(get_db), user: User = Depends(LECTURER)):
+    m = db.get(ExamMatrix, mid)
+    if not m:
+        return
+    if m.status == "approved":
+        raise HTTPException(400, "Ma trận đã duyệt — hãy chuyển về nháp hoặc lưu trữ trước khi xóa.")
+    db.delete(m)
+    db.commit()
+    log_action(db, user.id, "exam_matrix", mid, "delete")
 
 
 class MatrixGenIn(BaseModel):
@@ -361,9 +455,12 @@ def generate_matrix(
     if not cells:
         raise HTTPException(400, "AI không tạo được ô khả thi từ ngân hàng hiện có.")
 
-    obj = ExamMatrix(course_id=course_id, name=gen["name"], cells_json=cells)
+    obj = ExamMatrix(
+        course_id=course_id, name=gen["name"], cells_json=cells,
+        total_points=payload.total_points, created_by=user.id,
+    )
     db.add(obj)
     db.commit()
     db.refresh(obj)
     log_action(db, user.id, "exam_matrix", obj.id, "generate_ai")
-    return ExamMatrixOut(id=obj.id, course_id=course_id, name=obj.name, cells=obj.cells_json)
+    return _matrix_out(obj)

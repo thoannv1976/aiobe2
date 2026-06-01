@@ -334,7 +334,12 @@ class ExamMatrix(Base):
     name: Mapped[str] = mapped_column(String(255))
     # cells: [{clo_id, bloom_level, difficulty, count, points_each}]
     cells_json: Mapped[list] = mapped_column(JSON, default=list)
+    status: Mapped[str] = mapped_column(String(50), default="draft")  # draft|review|approved|archived
+    total_points: Mapped[float] = mapped_column(Float, default=10)  # thang điểm khai báo
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    approved_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
 
     exams: Mapped[list[Exam]] = relationship(
         back_populates="matrix", cascade="all, delete-orphan"
