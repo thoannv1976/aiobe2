@@ -44,6 +44,7 @@ class ExamMatrixCreate(BaseModel):
     name: str
     cells: list[MatrixCell] = Field(default_factory=list)
     total_points: float = 10
+    assessment_id: int | None = None
 
 
 class ExamMatrixOut(BaseModel):
@@ -53,6 +54,7 @@ class ExamMatrixOut(BaseModel):
     cells: list[MatrixCell] = Field(default_factory=list)
     status: str = "draft"
     total_points: float = 10
+    assessment_id: int | None = None
 
     class Config:
         from_attributes = True

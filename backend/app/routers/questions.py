@@ -454,8 +454,18 @@ MATRIX_TRANSITIONS = {
 def _matrix_out(m: ExamMatrix) -> ExamMatrixOut:
     return ExamMatrixOut(
         id=m.id, course_id=m.course_id, name=m.name, cells=m.cells_json,
-        status=m.status, total_points=m.total_points,
+        status=m.status, total_points=m.total_points, assessment_id=m.assessment_id,
     )
+
+
+def _assessment_clo_ids(db: Session, assessment_id: int) -> set[int]:
+    """CLO id mà một cấu phần đánh giá phụ trách (constructive alignment)."""
+    from app.models import AssessmentClo
+
+    return {
+        ac.clo_id
+        for ac in db.query(AssessmentClo).filter(AssessmentClo.assessment_id == assessment_id).all()
+    }
 
 
 @router.get("/courses/{course_id}/matrices", response_model=list[ExamMatrixOut])
@@ -473,6 +483,7 @@ def create_matrix(
         course_id=course_id, name=payload.name,
         cells_json=[c.model_dump() for c in payload.cells],
         total_points=payload.total_points, created_by=user.id,
+        assessment_id=payload.assessment_id,
     )
     db.add(obj)
     db.commit()
@@ -489,7 +500,33 @@ def matrix_summary_endpoint(mid: int, db: Session = Depends(get_db), _: User = D
     m = db.get(ExamMatrix, mid)
     if not m:
         raise HTTPException(404, "Không tìm thấy ma trận")
-    return matrix_summary(m.cells_json, m.total_points)
+    res = matrix_summary(m.cells_json, m.total_points)
+
+    # Kiểm tra liên kết với cấu phần đánh giá của đề cương (constructive alignment).
+    if m.assessment_id:
+        from app.models import Assessment, Clo
+
+        a = db.get(Assessment, m.assessment_id)
+        if a:
+            res["assessment_name"] = a.name
+            res["assessment_weight"] = a.weight_percent
+            target_clos = _assessment_clo_ids(db, m.assessment_id)
+            target_codes = {c.code for c in db.query(Clo).filter(Clo.id.in_(target_clos or [-1])).all()}
+            matrix_clo_ids = {c.get("clo_id") for c in m.cells_json if c.get("clo_id")}
+            matrix_codes = {c.code for c in db.query(Clo).filter(Clo.id.in_(matrix_clo_ids or [-1])).all()}
+            # CLO mà cấu phần cần đo nhưng ma trận chưa có
+            missing = target_codes - matrix_codes
+            # CLO ma trận đo nhưng không thuộc cấu phần
+            extra = matrix_codes - target_codes
+            if missing:
+                res.setdefault("warnings", []).append(
+                    f"Cấu phần \"{a.name}\" đánh giá CLO {', '.join(sorted(missing))} nhưng ma trận chưa có."
+                )
+            if extra:
+                res.setdefault("warnings", []).append(
+                    f"Ma trận đo CLO {', '.join(sorted(extra))} không nằm trong cấu phần \"{a.name}\"."
+                )
+    return res
 
 
 @router.put("/matrices/{mid}", response_model=ExamMatrixOut)
@@ -502,6 +539,8 @@ def update_matrix(mid: int, payload: ExamMatrixCreate, db: Session = Depends(get
     m.name = payload.name
     m.cells_json = [c.model_dump() for c in payload.cells]
     m.total_points = payload.total_points
+    if payload.assessment_id is not None:
+        m.assessment_id = payload.assessment_id or None
     db.commit()
     db.refresh(m)
     log_action(db, user.id, "exam_matrix", mid, "update")
@@ -522,6 +561,12 @@ def optimize_matrix(mid: int, db: Session = Depends(get_db), user: User = Depend
     clos = _latest_clos(db, m.course_id)
     if not clos:
         raise HTTPException(400, "Học phần chưa có CLO.")
+    # Nếu ma trận gắn cấu phần đánh giá: chỉ tối ưu trong phạm vi CLO của cấu phần đó.
+    if m.assessment_id:
+        target = _assessment_clo_ids(db, m.assessment_id)
+        scoped = [c for c in clos if c.id in target]
+        if scoped:
+            clos = scoped
     code_by_id = {c.id: c.code for c in clos}
     id_by_code = {c.code: c.id for c in clos}
 
@@ -644,13 +689,17 @@ def delete_matrix(mid: int, db: Session = Depends(get_db), user: User = Depends(
 class MatrixGenIn(BaseModel):
     total_points: float = 100
     name: str = ""
+    assessment_id: int | None = None  # gắn cấu phần đánh giá của đề cương
 
 
 @router.post("/courses/{course_id}/matrices/generate", response_model=ExamMatrixOut, status_code=201)
 def generate_matrix(
     course_id: int, payload: MatrixGenIn, db: Session = Depends(get_db), user: User = Depends(LECTURER)
 ):
-    """AI tạo ma trận đề thi bám sát ngân hàng câu hỏi hiện có (SPEC mục 11)."""
+    """AI tạo ma trận đề thi bám sát ngân hàng câu hỏi hiện có (SPEC mục 11).
+
+    Nếu có assessment_id: chỉ dùng CLO mà cấu phần đánh giá đó phụ trách (constructive alignment).
+    """
     from app.services.matrix_ai import generate_exam_matrix_ai
 
     course = db.get(Course, course_id)
@@ -659,6 +708,12 @@ def generate_matrix(
     clos = _latest_clos(db, course_id)
     if not clos:
         raise HTTPException(400, "Học phần chưa có đề cương/CLO. Hãy tạo đề cương trước.")
+    # Lọc CLO theo cấu phần đánh giá nếu được gắn.
+    if payload.assessment_id:
+        target = _assessment_clo_ids(db, payload.assessment_id)
+        scoped = [c for c in clos if c.id in target]
+        if scoped:
+            clos = scoped
     code_by_id = {c.id: c.code for c in clos}
 
     # Thống kê ngân hàng theo tổ hợp (CLO×Bloom×độ khó) để ma trận khả thi.
@@ -713,6 +768,7 @@ def generate_matrix(
     obj = ExamMatrix(
         course_id=course_id, name=gen["name"], cells_json=cells,
         total_points=payload.total_points, created_by=user.id,
+        assessment_id=payload.assessment_id,
     )
     db.add(obj)
     db.commit()
