@@ -729,12 +729,15 @@ export default function QuestionsPage() {
                       />
                       <span>
                         <b>{c.code}</b>
+                        {c.description && (
+                          <span className="ml-1 text-slate-700">— {c.description}</span>
+                        )}
                         {chs.length > 0 ? (
-                          <span className="ml-1 text-xs text-green-700">
+                          <span className="ml-1 block text-xs text-green-700">
                             📚 {chs.length} chương: {chs.join("; ")}
                           </span>
                         ) : (
-                          <span className="ml-1 text-xs text-amber-600">
+                          <span className="ml-1 block text-xs text-amber-600">
                             ⚠ chưa có chương giáo trình gắn — AI ra đề theo mô tả CLO
                           </span>
                         )}
@@ -1162,9 +1165,12 @@ export default function QuestionsPage() {
                     <div className="grid gap-3 sm:grid-cols-2">
                       <div>
                         <b>Tỷ trọng theo CLO</b>
-                        {Object.entries(sm.clo_weight).map(([k, v]: any) => (
-                          <div key={k}>CLO id {k}: {v.points}đ ({v.percent}%)</div>
-                        ))}
+                        {Object.entries(sm.clo_weight).map(([k, v]: any) => {
+                          const clo = clos.find((c) => String(c.id) === String(k));
+                          return (
+                            <div key={k}>{clo ? clo.code : `CLO id ${k}`}: {v.points}đ ({v.percent}%)</div>
+                          );
+                        })}
                       </div>
                       <div>
                         <b>Tỷ trọng theo Bloom</b>
