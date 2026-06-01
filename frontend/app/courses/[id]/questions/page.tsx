@@ -163,6 +163,25 @@ export default function QuestionsPage() {
     }
   }
 
+  const [optimizeBusy, setOptimizeBusy] = useState<number | null>(null);
+  const [matrixRationale, setMatrixRationale] = useState<Record<number, string>>({});
+
+  async function optimizeMatrix(mid: number) {
+    setErr("");
+    setOptimizeBusy(mid);
+    try {
+      const r = await api(`/api/matrices/${mid}/optimize`, { method: "POST" });
+      setMatrices(await api(`/api/courses/${id}/matrices`));
+      // Tự mở tỷ trọng + giải thích để người dùng thấy kết quả tối ưu ngay.
+      await loadSummary(mid);
+      setMatrixRationale((p) => ({ ...p, [mid]: r.rationale || "" }));
+    } catch (e: any) {
+      setErr(e.message);
+    } finally {
+      setOptimizeBusy(null);
+    }
+  }
+
   async function changeMatrixStatus(mid: number, to: string) {
     setErr("");
     try {
@@ -1031,6 +1050,11 @@ export default function QuestionsPage() {
                     {st !== "approved" && st !== "archived" && (
                       <button onClick={() => openMatrixEditor(m)} className="rounded bg-amber-100 px-2 py-1 text-xs text-amber-700 hover:bg-amber-200">Sửa</button>
                     )}
+                    {st !== "approved" && st !== "archived" && (
+                      <button onClick={() => optimizeMatrix(m.id)} disabled={optimizeBusy === m.id} className="rounded bg-green-600 px-2 py-1 text-xs text-white disabled:opacity-50">
+                        {optimizeBusy === m.id ? "Đang tối ưu..." : "✨ Tối ưu AI"}
+                      </button>
+                    )}
                     {next[st] && (
                       <button onClick={() => changeMatrixStatus(m.id, next[st])} className="rounded bg-slate-100 px-2 py-1 text-xs hover:bg-slate-200">
                         → {STATUS_VI[next[st]]}
@@ -1154,6 +1178,12 @@ export default function QuestionsPage() {
                         ))}
                       </tbody>
                     </table>
+                  </div>
+                )}
+                {matrixRationale[m.id] && (
+                  <div className="mt-3 rounded border border-green-300 bg-green-50 p-3 text-xs">
+                    <b>✨ Vì sao ma trận sau tối ưu đáp ứng kiểm định AUN-QA:</b>
+                    <div className="mt-1 whitespace-pre-line text-slate-700">{matrixRationale[m.id]}</div>
                   </div>
                 )}
               </div>

@@ -508,6 +508,81 @@ def update_matrix(mid: int, payload: ExamMatrixCreate, db: Session = Depends(get
     return _matrix_out(m)
 
 
+@router.post("/matrices/{mid}/optimize")
+def optimize_matrix(mid: int, db: Session = Depends(get_db), user: User = Depends(LECTURER)):
+    """AI tối ưu ma trận (cân tổng điểm, cân đối Bloom, bám ngân hàng Đã duyệt) + giải thích AUN-QA."""
+    from app.services.matrix_ai import optimize_exam_matrix_ai
+
+    m = db.get(ExamMatrix, mid)
+    if not m:
+        raise HTTPException(404, "Không tìm thấy ma trận")
+    if m.status in ("approved", "archived"):
+        raise HTTPException(400, "Ma trận đã duyệt/lưu trữ — hãy nhân bản để tối ưu bản nháp.")
+    course = db.get(Course, m.course_id)
+    clos = _latest_clos(db, m.course_id)
+    if not clos:
+        raise HTTPException(400, "Học phần chưa có CLO.")
+    code_by_id = {c.id: c.code for c in clos}
+    id_by_code = {c.code: c.id for c in clos}
+
+    # Ngân hàng câu Đã duyệt theo tổ hợp
+    avail: dict[tuple, int] = {}
+    for q in db.query(Question).filter(
+        Question.course_id == m.course_id, Question.is_deleted == False,  # noqa: E712
+        Question.review_status == "approved",
+    ).all():
+        if q.clo_id in code_by_id:
+            key = (code_by_id[q.clo_id], q.bloom_level, q.difficulty)
+            avail[key] = avail.get(key, 0) + 1
+    bank_cells = [
+        {"clo_code": k[0], "bloom_level": k[1], "difficulty": k[2], "available": v}
+        for k, v in avail.items()
+    ]
+    current = [
+        {"clo_code": code_by_id.get(c.get("clo_id")), "bloom_level": c.get("bloom_level"),
+         "difficulty": c.get("difficulty"), "count": c.get("count"), "points_each": c.get("points_each")}
+        for c in m.cells_json
+    ]
+
+    try:
+        res = optimize_exam_matrix_ai(
+            course={"code": course.code, "name": course.name},
+            clos=[{"code": c.code, "description": c.description} for c in clos],
+            bank_cells=bank_cells,
+            current_cells=current,
+            total_points=m.total_points,
+        )
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(400, f"Tối ưu ma trận thất bại: {e}")
+
+    # Áp kết quả: ánh xạ code→id, clamp theo ngân hàng, bỏ ô không khả thi.
+    cells = []
+    for cell in res["cells"]:
+        cid = id_by_code.get(cell.get("clo_code"))
+        if cid is None:
+            continue
+        key = (cell.get("clo_code"), cell.get("bloom_level"), cell.get("difficulty"))
+        count = min(int(cell.get("count", 0) or 0), avail.get(key, 0))
+        if count <= 0:
+            continue
+        cells.append({
+            "clo_id": cid, "bloom_level": cell.get("bloom_level"),
+            "difficulty": cell.get("difficulty"), "count": count,
+            "points_each": cell.get("points_each"),
+        })
+    if not cells:
+        raise HTTPException(400, "AI không tạo được ô khả thi từ ngân hàng Đã duyệt.")
+    m.cells_json = cells
+    if res.get("name"):
+        m.name = res["name"]
+    db.commit()
+    db.refresh(m)
+    log_action(db, user.id, "exam_matrix", mid, "optimize")
+    out = _matrix_out(m).model_dump()
+    out["rationale"] = res.get("rationale", "")
+    return out
+
+
 @router.post("/matrices/{mid}/status", response_model=ExamMatrixOut)
 def matrix_change_status(mid: int, to: str, db: Session = Depends(get_db), user: User = Depends(LECTURER)):
     """Chuyển vòng đời ma trận: draft→review→approved→archived."""
