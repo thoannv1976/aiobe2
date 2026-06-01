@@ -51,7 +51,19 @@ interface Question {
   points: number;
   explanation: string;
   tags_json: string[];
+  review_status?: string;
+  review_note?: string | null;
+  chapter?: string | null;
+  learning_resource?: string | null;
 }
+
+const QSTATUS_VI: Record<string, string> = {
+  draft: "Nháp",
+  review: "Chờ duyệt",
+  approved: "Đã duyệt",
+  revise: "Cần sửa",
+  retired: "Ngừng dùng",
+};
 
 interface Stats {
   total: number;
@@ -129,12 +141,23 @@ export default function QuestionsPage() {
   const [matrixGenMsg, setMatrixGenMsg] = useState("");
   const [matrixPoints, setMatrixPoints] = useState<number>(100);
   const [matrixSummaries, setMatrixSummaries] = useState<Record<number, any>>({});
+  const [matrixCoverage, setMatrixCoverage] = useState<Record<number, any>>({});
 
   async function loadSummary(mid: number) {
     setErr("");
     try {
       const s = await api(`/api/matrices/${mid}/summary`);
       setMatrixSummaries((p) => ({ ...p, [mid]: s }));
+    } catch (e: any) {
+      setErr(e.message);
+    }
+  }
+
+  async function loadCoverage(mid: number) {
+    setErr("");
+    try {
+      const c = await api(`/api/matrices/${mid}/coverage`);
+      setMatrixCoverage((p) => ({ ...p, [mid]: c }));
     } catch (e: any) {
       setErr(e.message);
     }
@@ -312,6 +335,38 @@ export default function QuestionsPage() {
     try {
       await api(`/api/questions/${qid}`, { method: "DELETE" });
       if (editingId === qid) resetForm();
+      await load();
+    } catch (e: any) {
+      setErr(e.message);
+    }
+  }
+
+  // Bước thẩm định tiếp theo cho mỗi trạng thái câu hỏi.
+  function reviewNext(status: string): string[] {
+    const flow: Record<string, string[]> = {
+      draft: ["review"],
+      review: ["approved", "revise"],
+      revise: ["review"],
+      approved: ["retired"],
+      retired: ["draft"],
+    };
+    return flow[status] || [];
+  }
+
+  async function reviewQuestion(qid: number, to: string) {
+    setErr("");
+    try {
+      await api(`/api/questions/${qid}/review?to=${to}`, { method: "POST" });
+      await load();
+    } catch (e: any) {
+      setErr(e.message);
+    }
+  }
+
+  async function duplicateQuestion(qid: number) {
+    setErr("");
+    try {
+      await api(`/api/questions/${qid}/duplicate`, { method: "POST" });
       await load();
     } catch (e: any) {
       setErr(e.message);
@@ -741,6 +796,7 @@ export default function QuestionsPage() {
                 <th className="border p-2">Độ khó</th>
                 <th className="border p-2">Loại</th>
                 <th className="border p-2">Điểm</th>
+                <th className="border p-2">Trạng thái</th>
                 <th className="border p-2">Thao tác</th>
               </tr>
             </thead>
@@ -765,19 +821,30 @@ export default function QuestionsPage() {
                   </td>
                   <td className="border p-2 text-center">{q.points}</td>
                   <td className="border p-2 text-center">
-                    <div className="flex justify-center gap-2">
-                      <button
-                        onClick={() => editQuestion(q)}
-                        className="rounded bg-slate-100 px-2 py-1 hover:bg-slate-200"
-                      >
-                        Sửa
-                      </button>
-                      <button
-                        onClick={() => deleteQuestion(q.id)}
-                        className="rounded bg-red-100 px-2 py-1 text-red-700 hover:bg-red-200"
-                      >
-                        Xóa
-                      </button>
+                    {(() => {
+                      const st = q.review_status || "draft";
+                      const cls = st === "approved" ? "bg-green-100 text-green-700"
+                        : st === "review" ? "bg-amber-100 text-amber-700"
+                        : st === "revise" ? "bg-orange-100 text-orange-700"
+                        : st === "retired" ? "bg-slate-200 text-slate-500"
+                        : "bg-slate-100 text-slate-500";
+                      return <span className={`rounded px-2 py-0.5 text-xs ${cls}`}>{QSTATUS_VI[st] ?? st}</span>;
+                    })()}
+                  </td>
+                  <td className="border p-2 text-center">
+                    <div className="flex flex-wrap justify-center gap-1">
+                      {reviewNext(q.review_status || "draft").map((to) => (
+                        <button
+                          key={to}
+                          onClick={() => reviewQuestion(q.id, to)}
+                          className="rounded bg-indigo-100 px-2 py-1 text-xs text-indigo-700 hover:bg-indigo-200"
+                        >
+                          → {QSTATUS_VI[to]}
+                        </button>
+                      ))}
+                      <button onClick={() => editQuestion(q)} className="rounded bg-slate-100 px-2 py-1 hover:bg-slate-200">Sửa</button>
+                      <button onClick={() => duplicateQuestion(q.id)} className="rounded bg-slate-100 px-2 py-1 hover:bg-slate-200">Nhân bản</button>
+                      <button onClick={() => deleteQuestion(q.id)} className="rounded bg-red-100 px-2 py-1 text-red-700 hover:bg-red-200">Xóa</button>
                     </div>
                   </td>
                 </tr>
@@ -860,6 +927,7 @@ export default function QuestionsPage() {
                   </span>
                   <div className="flex flex-wrap gap-1">
                     <button onClick={() => loadSummary(m.id)} className="rounded bg-indigo-100 px-2 py-1 text-xs text-indigo-700 hover:bg-indigo-200">Tỷ trọng & cảnh báo</button>
+                    <button onClick={() => loadCoverage(m.id)} className="rounded bg-indigo-100 px-2 py-1 text-xs text-indigo-700 hover:bg-indigo-200">Độ phủ ngân hàng</button>
                     {next[st] && (
                       <button onClick={() => changeMatrixStatus(m.id, next[st])} className="rounded bg-slate-100 px-2 py-1 text-xs hover:bg-slate-200">
                         → {STATUS_VI[next[st]]}
@@ -891,6 +959,37 @@ export default function QuestionsPage() {
                     </div>
                     {sm.errors.map((e: string) => <div key={e} className="mt-1 text-red-700">✗ {e}</div>)}
                     {sm.warnings.map((w: string) => <div key={w} className="mt-1 text-amber-700">⚠ {w}</div>)}
+                  </div>
+                )}
+                {matrixCoverage[m.id] && (
+                  <div className="mt-3 rounded bg-slate-50 p-3 text-xs">
+                    <b>Độ phủ ngân hàng (chỉ tính câu Đã duyệt)</b>
+                    {!matrixCoverage[m.id].ok && (
+                      <span className="ml-2 text-red-700">✗ có ô thiếu câu — không sinh đủ đề</span>
+                    )}
+                    <table className="mt-1 w-full">
+                      <thead>
+                        <tr className="text-slate-500">
+                          <th className="p-1 text-left">CLO</th><th className="p-1">Bloom</th>
+                          <th className="p-1">Độ khó</th><th className="p-1">Cần</th>
+                          <th className="p-1">Đã duyệt</th><th className="p-1">Tình trạng</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {matrixCoverage[m.id].rows.map((r: any, i: number) => (
+                          <tr key={i} className={r.status === "thiếu" ? "text-red-700" : r.status === "ít" ? "text-amber-700" : ""}>
+                            <td className="p-1">{r.clo}</td>
+                            <td className="p-1 text-center">{BLOOM[r.bloom_level] ?? r.bloom_level}</td>
+                            <td className="p-1 text-center">{DIFFICULTY[r.difficulty] ?? r.difficulty}</td>
+                            <td className="p-1 text-center">{r.need}</td>
+                            <td className="p-1 text-center">{r.have_approved}</td>
+                            <td className="p-1 text-center">
+                              {r.status === "ok" ? "✓ đủ" : r.status === "ít" ? "⚠ ít (<3×)" : "✗ thiếu"}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
                 )}
               </div>
