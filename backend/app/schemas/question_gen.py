@@ -7,6 +7,12 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 
+class GenRubricCriterion(BaseModel):
+    name: str = ""
+    weight_percent: float = 0
+    levels: list[str] = Field(default_factory=list)  # mô tả các mức (Giỏi/Khá/Đạt/Chưa đạt)
+
+
 class GenQuestion(BaseModel):
     clo_code: str = ""           # mã CLO (ánh xạ sang clo_id khi ghi)
     bloom_level: str = "remember"
@@ -17,6 +23,8 @@ class GenQuestion(BaseModel):
     answer: str = ""
     points: float = 1
     explanation: str = ""
+    source: str = ""             # nguồn: chương giáo trình / bài giảng liên quan
+    rubric: list[GenRubricCriterion] = Field(default_factory=list)  # cho tự luận/bài tập
 
 
 class GeneratedQuestions(BaseModel):

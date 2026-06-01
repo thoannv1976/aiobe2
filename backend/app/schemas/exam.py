@@ -15,6 +15,7 @@ class QuestionBase(BaseModel):
     tags_json: list = Field(default_factory=list)
     chapter: str | None = None
     learning_resource: str | None = None
+    rubric_json: dict = Field(default_factory=dict)
 
 
 class QuestionCreate(QuestionBase):

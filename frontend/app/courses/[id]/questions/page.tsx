@@ -55,6 +55,7 @@ interface Question {
   review_note?: string | null;
   chapter?: string | null;
   learning_resource?: string | null;
+  rubric_json?: { criteria?: any[] };
 }
 
 const QSTATUS_VI: Record<string, string> = {
@@ -942,6 +943,14 @@ export default function QuestionsPage() {
                     {q.content.length > 80
                       ? q.content.slice(0, 80) + "…"
                       : q.content}
+                    {q.learning_resource && (
+                      <div className="mt-1 text-xs text-slate-500">📖 Nguồn: {q.learning_resource}</div>
+                    )}
+                    {q.rubric_json?.criteria && q.rubric_json.criteria.length > 0 && (
+                      <div className="mt-1 text-xs text-green-700">
+                        📋 Có rubric ({q.rubric_json.criteria.length} tiêu chí)
+                      </div>
+                    )}
                   </td>
                   <td className="border p-2 text-center">{cloLabel(q.clo_id)}</td>
                   <td className="border p-2 text-center">

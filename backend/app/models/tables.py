@@ -324,6 +324,7 @@ class Question(Base):
     # Truy vết minh chứng (SPEC ngân hàng đề thi)
     chapter: Mapped[str | None] = mapped_column(String(500), nullable=True)       # chương/chủ đề
     learning_resource: Mapped[str | None] = mapped_column(String(1000), nullable=True)  # nguồn học liệu
+    rubric_json: Mapped[dict] = mapped_column(JSON, default=dict)  # rubric chấm (tự luận/bài tập)
     # Quy trình thẩm định: draft|review|approved|revise|retired
     review_status: Mapped[str] = mapped_column(String(50), default="draft")
     reviewed_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)

@@ -188,6 +188,8 @@ def generate_questions(
                 answer=gq.answer or None,
                 points=gq.points or 1,
                 explanation=gq.explanation or None,
+                learning_resource=gq.source or None,  # nguồn chương/bài giảng
+                rubric_json={"criteria": [c.model_dump() for c in gq.rubric]} if gq.rubric else {},
                 tags_json=["ai-generated"],
             )
         )
@@ -246,6 +248,9 @@ def _approve_reason(q: Question) -> str | None:
         return "Câu trắc nghiệm thiếu đáp án đúng"
     if q.type in ("essay", "exercise", "short_answer") and not (q.answer or "").strip():
         return "Câu tự luận/bài tập thiếu đáp án/thang điểm"
+    # Tự luận/bài tập cần rubric chấm (SPEC ngân hàng đề thi).
+    if q.type in ("essay", "exercise") and not ((q.rubric_json or {}).get("criteria")):
+        return "Câu tự luận/bài tập thiếu rubric chấm điểm"
     return None
 
 

@@ -20,7 +20,11 @@ kiến thức/kỹ năng thực sự xuất hiện trong nội dung giáo trình
 - Với câu trắc nghiệm (mcq_single/mcq_multi): cung cấp 4 phương án trong "options"; \
 "answer" ghi rõ phương án đúng (vd "A" hoặc "A,C" cho nhiều đáp án).
 - Với tự luận/điền khuyết/bài tập: "options" để rỗng, "answer" là đáp án/gợi ý chấm.
-- Mỗi câu có "explanation" giải thích ngắn gọn.
+- MỖI câu có "explanation" GIẢI THÍCH đáp án (vì sao đúng/sai) ngắn gọn nhưng đầy đủ.
+- MỖI câu có "source": NGUỒN kiến thức — ghi rõ chương/mục giáo trình hoặc buổi bài giảng \
+liên quan (dựa trên ngữ liệu giáo trình được cung cấp; nếu không rõ thì ghi chủ đề CLO).
+- VỚI CÂU TỰ LUẬN, BÀI TẬP (essay/exercise): BẮT BUỘC kèm "rubric" gồm 2–4 tiêu chí chấm điểm, \
+mỗi tiêu chí có trọng số (%) và 3–4 mức chất lượng (Giỏi/Khá/Đạt/Chưa đạt) mô tả cụ thể.
 - Nội dung chính xác về học thuật, rõ ràng, không mơ hồ, KHÔNG trùng lặp.
 
 Chỉ trả về DUY NHẤT một JSON hợp lệ (không markdown, không văn bản thừa) theo schema:
@@ -28,9 +32,12 @@ Chỉ trả về DUY NHẤT một JSON hợp lệ (không markdown, không văn 
   "questions": [
     {"clo_code":"CLO1","bloom_level":"remember|understand|apply|analyze|evaluate|create",
      "difficulty":"easy|medium|hard","type":"mcq_single|mcq_multi|fill_blank|short_answer|essay|exercise",
-     "content":"","options":["A. ...","B. ...","C. ...","D. ..."],"answer":"","points":1,"explanation":""}
+     "content":"","options":["A. ...","B. ...","C. ...","D. ..."],"answer":"","points":1,
+     "explanation":"giải thích đáp án","source":"Chương/mục giáo trình hoặc buổi bài giảng liên quan",
+     "rubric":[{"name":"tiêu chí","weight_percent":50,"levels":["Giỏi: ...","Khá: ...","Đạt: ...","Chưa đạt: ..."]}]}
   ]
 }
+Lưu ý: "rubric" chỉ cần cho tự luận/bài tập; câu trắc nghiệm để "rubric" là mảng rỗng.
 Chỉ dùng các mã CLO có trong dữ liệu được cung cấp."""
 
 
