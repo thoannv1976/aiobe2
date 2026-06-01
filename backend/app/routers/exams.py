@@ -27,13 +27,18 @@ def generate(payload: ExamGenerateIn, db: Session = Depends(get_db), user: User 
     matrix = db.get(ExamMatrix, payload.matrix_id)
     if not matrix:
         raise HTTPException(404, "Không tìm thấy ma trận đề")
+    # Chỉ lấy câu hỏi ĐÃ DUYỆT (review_status=approved) để sinh đề (SPEC ngân hàng đề thi).
     questions = [
         {
             "id": q.id, "clo_id": q.clo_id, "bloom_level": q.bloom_level,
             "difficulty": q.difficulty, "points": q.points,
         }
         for q in db.query(Question)
-        .filter(Question.course_id == matrix.course_id, Question.is_deleted == False)  # noqa: E712
+        .filter(
+            Question.course_id == matrix.course_id,
+            Question.is_deleted == False,  # noqa: E712
+            Question.review_status == "approved",
+        )
         .all()
     ]
     res = generate_exam_pure(matrix.cells_json, questions, seed=payload.seed)
@@ -111,6 +116,66 @@ def blueprint(exam_id: int, db: Session = Depends(get_db), _: User = Depends(get
     return {
         "exam_id": exam_id, "total_points": exam.total_points,
         "items": items, "clo_distribution": clo_dist, "bloom_distribution": bloom_dist,
+    }
+
+
+@router.get("/exams/{exam_id}/mapping")
+def exam_mapping(exam_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+    """Bảng mapping câu hỏi–CLO–PLO/PI + tỷ trọng CLO/Bloom theo điểm (SPEC mục 14)."""
+    from app.models import Clo, CloPlo, Pi, Plo
+
+    exam = db.get(Exam, exam_id)
+    if not exam:
+        raise HTTPException(404, "Không tìm thấy đề thi")
+
+    # Tỷ trọng theo điểm
+    clo_pts: dict = {}
+    bloom_pts: dict = {}
+    total = 0.0
+    rows = []
+    clo_cache: dict = {}
+
+    def clo_info(clo_id):
+        if clo_id in clo_cache:
+            return clo_cache[clo_id]
+        clo = db.get(Clo, clo_id) if clo_id else None
+        plo_codes = []
+        if clo:
+            for cp in db.query(CloPlo).filter(CloPlo.clo_id == clo.id).all():
+                plo = db.get(Plo, cp.plo_id)
+                if plo:
+                    pis = db.query(Pi).filter(Pi.plo_id == plo.id).all()
+                    plo_codes.append({"plo": plo.code, "pis": [p.code for p in pis]})
+        info = {"code": clo.code if clo else "?", "plos": plo_codes}
+        clo_cache[clo_id] = info
+        return info
+
+    for eq in (
+        db.query(ExamQuestion)
+        .filter(ExamQuestion.exam_id == exam_id, ExamQuestion.variant == 1)
+        .order_by(ExamQuestion.order)
+        .all()
+    ):
+        q = db.get(Question, eq.question_id)
+        if not q:
+            continue
+        info = clo_info(q.clo_id)
+        clo_pts[info["code"]] = clo_pts.get(info["code"], 0.0) + q.points
+        bloom_pts[q.bloom_level] = bloom_pts.get(q.bloom_level, 0.0) + q.points
+        total += q.points
+        rows.append({
+            "order": eq.order, "clo": info["code"], "plos": info["plos"],
+            "bloom_level": q.bloom_level, "points": q.points,
+        })
+
+    def pct(x):
+        return round(x / total * 100, 1) if total else 0.0
+
+    return {
+        "exam_id": exam_id,
+        "rows": rows,
+        "clo_weight": {k: {"points": round(v, 2), "percent": pct(v)} for k, v in clo_pts.items()},
+        "bloom_weight": {k: {"points": round(v, 2), "percent": pct(v)} for k, v in bloom_pts.items()},
     }
 
 

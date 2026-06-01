@@ -37,12 +37,34 @@ LECTURER = require_roles(Role.LECTURER, Role.PROGRAM_MANAGER)
 
 
 @router.get("/courses/{course_id}/questions", response_model=list[QuestionOut])
-def list_questions(course_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
-    return (
-        db.query(Question)
-        .filter(Question.course_id == course_id, Question.is_deleted == False)  # noqa: E712
-        .all()
+def list_questions(
+    course_id: int,
+    clo_id: int | None = None,
+    bloom_level: str | None = None,
+    difficulty: str | None = None,
+    type: str | None = None,
+    review_status: str | None = None,
+    q: str | None = None,  # tìm theo nội dung
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """Liệt kê câu hỏi, hỗ trợ lọc theo CLO/Bloom/độ khó/dạng/trạng thái + tìm nội dung."""
+    query = db.query(Question).filter(
+        Question.course_id == course_id, Question.is_deleted == False  # noqa: E712
     )
+    if clo_id is not None:
+        query = query.filter(Question.clo_id == clo_id)
+    if bloom_level:
+        query = query.filter(Question.bloom_level == bloom_level)
+    if difficulty:
+        query = query.filter(Question.difficulty == difficulty)
+    if type:
+        query = query.filter(Question.type == type)
+    if review_status:
+        query = query.filter(Question.review_status == review_status)
+    if q:
+        query = query.filter(Question.content.ilike(f"%{q}%"))
+    return query.all()
 
 
 @router.post("/courses/{course_id}/questions", response_model=QuestionOut, status_code=201)
@@ -188,6 +210,66 @@ def update_question(qid: int, payload: QuestionCreate, db: Session = Depends(get
     return obj
 
 
+@router.post("/questions/{qid}/duplicate", response_model=QuestionOut, status_code=201)
+def duplicate_question(qid: int, db: Session = Depends(get_db), user: User = Depends(LECTURER)):
+    src = db.get(Question, qid)
+    if not src or src.is_deleted:
+        raise HTTPException(404, "Không tìm thấy câu hỏi")
+    dup = Question(
+        course_id=src.course_id, clo_id=src.clo_id, bloom_level=src.bloom_level,
+        difficulty=src.difficulty, type=src.type, content=f"{src.content} (bản sao)",
+        options_json=list(src.options_json or []), answer=src.answer, points=src.points,
+        explanation=src.explanation, tags_json=list(src.tags_json or []),
+        chapter=src.chapter, learning_resource=src.learning_resource,
+        review_status="draft",
+    )
+    db.add(dup)
+    db.commit()
+    db.refresh(dup)
+    log_action(db, user.id, "question", dup.id, "duplicate", {"from": qid})
+    return dup
+
+
+# Quy trình thẩm định câu hỏi (SPEC ngân hàng đề thi)
+QUESTION_REVIEW_FLOW = {
+    "draft": {"review"},
+    "review": {"approved", "revise"},
+    "revise": {"review", "draft"},
+    "approved": {"retired", "revise"},
+    "retired": {"draft"},
+}
+
+
+@router.post("/questions/{qid}/review", response_model=QuestionOut)
+def review_question(
+    qid: int, to: str, note: str | None = None,
+    db: Session = Depends(get_db), user: User = Depends(LECTURER),
+):
+    """Chuyển trạng thái thẩm định câu hỏi: draft→review→approved/revise→retired."""
+    obj = db.get(Question, qid)
+    if not obj or obj.is_deleted:
+        raise HTTPException(404, "Không tìm thấy câu hỏi")
+    if to not in QUESTION_REVIEW_FLOW.get(obj.review_status, set()):
+        raise HTTPException(400, f"Không thể chuyển {obj.review_status} → {to}")
+    if to == "approved":
+        if user.role not in (Role.PROGRAM_MANAGER.value, Role.ADMIN.value):
+            raise HTTPException(403, "Chỉ quản lý/trưởng bộ môn mới được duyệt câu hỏi")
+        # Validation theo SPEC: TN cần đáp án; tự luận/case cần rubric/đáp án.
+        if obj.type in ("mcq_single", "mcq_multi") and not (obj.answer or "").strip():
+            raise HTTPException(400, "Câu trắc nghiệm phải có đáp án đúng trước khi duyệt")
+        if obj.type in ("essay", "exercise", "short_answer") and not (obj.answer or "").strip():
+            raise HTTPException(400, "Câu tự luận/bài tập phải có đáp án/thang điểm trước khi duyệt")
+        obj.reviewed_by = user.id
+    prev = obj.review_status
+    obj.review_status = to
+    if note is not None:
+        obj.review_note = note
+    db.commit()
+    db.refresh(obj)
+    log_action(db, user.id, "question", qid, "review", {"from": prev, "to": to})
+    return obj
+
+
 @router.delete("/questions/{qid}", status_code=204)
 def delete_question(qid: int, db: Session = Depends(get_db), user: User = Depends(LECTURER)):
     obj = db.get(Question, qid)
@@ -201,6 +283,45 @@ def delete_question(qid: int, db: Session = Depends(get_db), user: User = Depend
 def stats(course_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
     """Thống kê ngân hàng theo CLO/Bloom/độ khó (SPEC 4.5)."""
     return question_bank_stats(db, course_id)
+
+
+@router.get("/matrices/{mid}/coverage")
+def matrix_bank_coverage(mid: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+    """Độ phủ ngân hàng theo từng ô ma trận: số câu Approved sẵn có vs cần lấy (SPEC mục 12).
+
+    Cảnh báo nếu nhóm có câu Approved < 3 lần số câu cần (an toàn để random).
+    """
+    m = db.get(ExamMatrix, mid)
+    if not m:
+        raise HTTPException(404, "Không tìm thấy ma trận")
+    # Đếm câu Approved theo tổ hợp (clo_id, bloom, difficulty)
+    avail: dict[tuple, int] = {}
+    for q in db.query(Question).filter(
+        Question.course_id == m.course_id, Question.is_deleted == False,  # noqa: E712
+        Question.review_status == "approved",
+    ).all():
+        key = (q.clo_id, q.bloom_level, q.difficulty)
+        avail[key] = avail.get(key, 0) + 1
+    clo_codes = {c.id: c.code for c in db.query(Clo).all()}
+
+    rows = []
+    ok = True
+    for cell in m.cells_json:
+        need = int(cell.get("count", 0) or 0)
+        key = (cell.get("clo_id"), cell.get("bloom_level"), cell.get("difficulty"))
+        have = avail.get(key, 0)
+        status = "ok"
+        if have < need:
+            status = "thiếu"
+            ok = False
+        elif have < need * 3:
+            status = "ít"  # cảnh báo: dưới 3× số cần
+        rows.append({
+            "clo": clo_codes.get(cell.get("clo_id"), f"CLO#{cell.get('clo_id')}"),
+            "bloom_level": cell.get("bloom_level"), "difficulty": cell.get("difficulty"),
+            "need": need, "have_approved": have, "status": status,
+        })
+    return {"matrix_id": mid, "matrix_name": m.name, "ok": ok, "rows": rows}
 
 
 # --------------------------- Import / Export CSV ---------------------------

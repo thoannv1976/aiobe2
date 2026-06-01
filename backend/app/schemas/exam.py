@@ -13,6 +13,8 @@ class QuestionBase(BaseModel):
     points: float = 1
     explanation: str | None = None
     tags_json: list = Field(default_factory=list)
+    chapter: str | None = None
+    learning_resource: str | None = None
 
 
 class QuestionCreate(QuestionBase):
@@ -22,6 +24,8 @@ class QuestionCreate(QuestionBase):
 class QuestionOut(QuestionBase):
     id: int
     course_id: int
+    review_status: str = "draft"
+    review_note: str | None = None
 
     class Config:
         from_attributes = True

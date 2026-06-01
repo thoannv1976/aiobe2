@@ -321,6 +321,13 @@ class Question(Base):
     points: Mapped[float] = mapped_column(Float, default=1)
     explanation: Mapped[str | None] = mapped_column(Text, nullable=True)
     tags_json: Mapped[list] = mapped_column(JSON, default=list)
+    # Truy vết minh chứng (SPEC ngân hàng đề thi)
+    chapter: Mapped[str | None] = mapped_column(String(500), nullable=True)       # chương/chủ đề
+    learning_resource: Mapped[str | None] = mapped_column(String(1000), nullable=True)  # nguồn học liệu
+    # Quy trình thẩm định: draft|review|approved|revise|retired
+    review_status: Mapped[str] = mapped_column(String(50), default="draft")
+    reviewed_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    review_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
 
     course: Mapped[Course] = relationship(back_populates="questions")

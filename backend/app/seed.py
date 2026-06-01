@@ -153,6 +153,7 @@ def run() -> None:
                         difficulty=diff, type="mcq_single",
                         content=f"Câu hỏi mẫu #{qid} ({bloom}/{diff})",
                         options_json=["A", "B", "C", "D"], answer="A", points=1,
+                        review_status="approved",
                     ))
 
         # --- Ma trận đề thi ---
