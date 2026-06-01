@@ -202,6 +202,38 @@ def list_exam_questions(exam_id: int, variant: int = 1, db: Session = Depends(ge
     return out
 
 
+# Thứ tự nhóm loại câu hỏi khi sắp xếp cho in ấn (trắc nghiệm trước, tự luận sau).
+_TYPE_ORDER = {
+    "mcq_single": 1, "mcq_multi": 1, "fill_blank": 2,
+    "short_answer": 3, "essay": 4, "exercise": 5,
+}
+
+
+@router.post("/exams/{exam_id}/arrange-for-print")
+def arrange_for_print(exam_id: int, db: Session = Depends(get_db), user: User = Depends(LECTURER)):
+    """Sắp xếp câu hỏi trong đề theo NHÓM CÙNG LOẠI (trắc nghiệm → điền khuyết → tự luận
+    ngắn → tự luận → bài tập) cho thuận tiện in ấn. Áp cho mọi mã đề."""
+    exam = db.get(Exam, exam_id)
+    if not exam:
+        raise HTTPException(404, "Không tìm thấy đề thi")
+    variants = sorted({eq.variant for eq in db.query(ExamQuestion).filter(ExamQuestion.exam_id == exam_id).all()})
+    total = 0
+    for v in variants:
+        eqs = db.query(ExamQuestion).filter(
+            ExamQuestion.exam_id == exam_id, ExamQuestion.variant == v
+        ).all()
+        # sắp theo (nhóm loại, thứ tự cũ) để giữ thứ tự tương đối trong cùng nhóm
+        def sort_key(eq):
+            q = db.get(Question, eq.question_id)
+            return (_TYPE_ORDER.get(q.type, 9) if q else 9, eq.order)
+        for new_order, eq in enumerate(sorted(eqs, key=sort_key), start=1):
+            eq.order = new_order
+            total += 1
+    db.commit()
+    log_action(db, user.id, "exam", exam_id, "arrange_for_print", {"variants": len(variants)})
+    return {"ok": True, "variants": len(variants), "questions": total}
+
+
 @router.post("/exam-questions/{eq_id}/lock", response_model=dict)
 def toggle_lock(eq_id: int, locked: bool = True, db: Session = Depends(get_db), user: User = Depends(LECTURER)):
     """Khóa/mở khóa một câu trong đề (SPEC 4.6)."""

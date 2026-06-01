@@ -196,7 +196,11 @@ def outline_to_docx(db: Session, outline_id: int) -> bytes:
 
 
 def exam_to_docx(db: Session, exam_id: int, variant: int = 1, with_answers: bool = False) -> bytes:
-    """Xuất đề thi (1 mã đề) ra DOCX; tùy chọn kèm đáp án/barem."""
+    """Xuất đề thi (1 mã đề) ra DOCX; tùy chọn kèm đáp án/barem.
+
+    Câu hỏi được nhóm theo LOẠI (trắc nghiệm trước, tự luận sau) và chia phần có tiêu đề
+    để thuận tiện in ấn.
+    """
     exam = db.get(Exam, exam_id)
     if not exam:
         raise ValueError("Không tìm thấy đề thi")
@@ -214,18 +218,51 @@ def exam_to_docx(db: Session, exam_id: int, variant: int = 1, with_answers: bool
         .order_by(ExamQuestion.order)
         .all()
     )
-    for eq in eqs:
-        q = db.get(Question, eq.question_id)
-        if not q:
+
+    # Gom câu theo nhóm loại để in thành các phần.
+    # Nhóm 1: trắc nghiệm (mcq_single, mcq_multi); Nhóm 2: điền khuyết;
+    # Nhóm 3: tự luận ngắn; Nhóm 4: tự luận; Nhóm 5: bài tập/khác.
+    GROUPS = [
+        ("Phần trắc nghiệm", {"mcq_single", "mcq_multi"}),
+        ("Phần điền khuyết", {"fill_blank"}),
+        ("Phần tự luận ngắn", {"short_answer"}),
+        ("Phần tự luận", {"essay"}),
+        ("Phần bài tập", {"exercise"}),
+    ]
+    items = [(eq, db.get(Question, eq.question_id)) for eq in eqs]
+    items = [(eq, q) for eq, q in items if q is not None]
+
+    num = 0
+    roman = ["I", "II", "III", "IV", "V", "VI"]
+    section_idx = 0
+    used_ids: set[int] = set()
+    for title, types in GROUPS:
+        group = [(eq, q) for eq, q in items if q.type in types]
+        if not group:
             continue
-        doc.add_paragraph(f"Câu {eq.order} ({q.points} điểm): {q.content}")
-        for i, opt in enumerate(q.options_json or []):
-            doc.add_paragraph(f"   {chr(65 + i)}. {opt}")
-        if with_answers:
-            ans = doc.add_paragraph(f"   → Đáp án: {q.answer or '-'}")
-            ans.runs[0].italic = True
-            if q.explanation:
-                doc.add_paragraph(f"   Giải thích: {q.explanation}")
+        section_idx += 1
+        doc.add_heading(f"Phần {roman[section_idx - 1]}. {title}", level=1)
+        for eq, q in group:
+            used_ids.add(eq.id)
+            num += 1
+            doc.add_paragraph(f"Câu {num} ({q.points} điểm): {q.content}")
+            for i, opt in enumerate(q.options_json or []):
+                doc.add_paragraph(f"   {chr(65 + i)}. {opt}")
+            if with_answers:
+                ans = doc.add_paragraph(f"   → Đáp án: {q.answer or '-'}")
+                if ans.runs:
+                    ans.runs[0].italic = True
+                if q.explanation:
+                    doc.add_paragraph(f"   Giải thích: {q.explanation}")
+    # Loại còn lại (nếu có loại lạ) — in nốt.
+    rest = [(eq, q) for eq, q in items if eq.id not in used_ids]
+    if rest:
+        doc.add_heading("Phần khác", level=1)
+        for eq, q in rest:
+            num += 1
+            doc.add_paragraph(f"Câu {num} ({q.points} điểm): {q.content}")
+            if with_answers:
+                doc.add_paragraph(f"   → Đáp án: {q.answer or '-'}")
 
     buf = io.BytesIO()
     doc.save(buf)

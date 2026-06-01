@@ -121,6 +121,20 @@ export default function ExamDetail() {
     }
   }
 
+  async function arrangeForPrint() {
+    setErr("");
+    setMsg("");
+    try {
+      const r = await api(`/api/exams/${id}/arrange-for-print`, { method: "POST" });
+      setMsg(
+        `Đã sắp xếp ${r.questions} câu theo nhóm cùng loại (trắc nghiệm → tự luận) cho ${r.variants} mã đề.`
+      );
+      await load();
+    } catch (e: any) {
+      setErr(e.message);
+    }
+  }
+
   async function exportDocx(answers: boolean) {
     setErr("");
     try {
@@ -162,6 +176,13 @@ export default function ExamDetail() {
           )}
         </h1>
         <div className="flex flex-wrap gap-2">
+          <button
+            onClick={arrangeForPrint}
+            className="rounded bg-green-600 px-4 py-2 text-white"
+            title="Sắp xếp câu hỏi theo nhóm cùng loại (trắc nghiệm → tự luận) cho dễ in"
+          >
+            🖨 Sắp xếp để in
+          </button>
           <button
             onClick={() => exportDocx(false)}
             className="rounded bg-indigo-600 px-4 py-2 text-white"
