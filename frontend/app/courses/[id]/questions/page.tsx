@@ -409,6 +409,33 @@ export default function QuestionsPage() {
     }
   }
 
+  const [approveBusy, setApproveBusy] = useState(false);
+  const [approveMsg, setApproveMsg] = useState("");
+  const [approveSkipped, setApproveSkipped] = useState<any[]>([]);
+
+  async function approveAll(onlyAi: boolean) {
+    setErr("");
+    setApproveMsg("");
+    setApproveSkipped([]);
+    setApproveBusy(true);
+    try {
+      const r = await api(
+        `/api/courses/${id}/questions/approve-all?only_ai=${onlyAi}`,
+        { method: "POST" }
+      );
+      setApproveMsg(
+        `Đã duyệt ${r.approved} câu hỏi.` +
+          (r.skipped_count ? ` Bỏ qua ${r.skipped_count} câu cần sửa.` : "")
+      );
+      setApproveSkipped(r.skipped || []);
+      await load();
+    } catch (e: any) {
+      setErr(e.message);
+    } finally {
+      setApproveBusy(false);
+    }
+  }
+
   async function duplicateQuestion(qid: number) {
     setErr("");
     try {
@@ -828,9 +855,36 @@ export default function QuestionsPage() {
 
       {/* Bảng câu hỏi */}
       <section>
-        <h2 className="mb-2 text-lg font-semibold">
-          Danh sách câu hỏi ({questions.length})
-        </h2>
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-lg font-semibold">
+            Danh sách câu hỏi ({questions.length})
+          </h2>
+          <div className="flex gap-2">
+            <button
+              onClick={() => approveAll(true)}
+              disabled={approveBusy}
+              className="rounded bg-green-600 px-3 py-1.5 text-sm text-white disabled:opacity-50"
+            >
+              {approveBusy ? "Đang duyệt..." : "✓ Duyệt tất cả câu AI tạo"}
+            </button>
+            <button
+              onClick={() => approveAll(false)}
+              disabled={approveBusy}
+              className="rounded border border-green-600 px-3 py-1.5 text-sm text-green-700 disabled:opacity-50"
+            >
+              ✓ Duyệt tất cả câu chưa duyệt
+            </button>
+          </div>
+        </div>
+        {approveMsg && <p className="mb-2 text-sm text-green-700">{approveMsg}</p>}
+        {approveSkipped.length > 0 && (
+          <div className="mb-2 rounded border border-amber-300 bg-amber-50 p-2 text-xs text-amber-800">
+            <b>Bỏ qua {approveSkipped.length} câu (cần sửa trước khi duyệt):</b>
+            {approveSkipped.map((s: any) => (
+              <div key={s.id}>• Câu #{s.id}: {s.reason}</div>
+            ))}
+          </div>
+        )}
         <div className="overflow-x-auto rounded border bg-white shadow-sm">
           <table className="w-full text-sm">
             <thead>

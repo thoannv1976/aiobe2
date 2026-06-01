@@ -240,6 +240,15 @@ QUESTION_REVIEW_FLOW = {
 }
 
 
+def _approve_reason(q: Question) -> str | None:
+    """Trả lý do KHÔNG thể duyệt câu hỏi, hoặc None nếu hợp lệ (SPEC validation)."""
+    if q.type in ("mcq_single", "mcq_multi") and not (q.answer or "").strip():
+        return "Câu trắc nghiệm thiếu đáp án đúng"
+    if q.type in ("essay", "exercise", "short_answer") and not (q.answer or "").strip():
+        return "Câu tự luận/bài tập thiếu đáp án/thang điểm"
+    return None
+
+
 @router.post("/questions/{qid}/review", response_model=QuestionOut)
 def review_question(
     qid: int, to: str, note: str | None = None,
@@ -254,11 +263,9 @@ def review_question(
     if to == "approved":
         if user.role not in (Role.PROGRAM_MANAGER.value, Role.ADMIN.value):
             raise HTTPException(403, "Chỉ quản lý/trưởng bộ môn mới được duyệt câu hỏi")
-        # Validation theo SPEC: TN cần đáp án; tự luận/case cần rubric/đáp án.
-        if obj.type in ("mcq_single", "mcq_multi") and not (obj.answer or "").strip():
-            raise HTTPException(400, "Câu trắc nghiệm phải có đáp án đúng trước khi duyệt")
-        if obj.type in ("essay", "exercise", "short_answer") and not (obj.answer or "").strip():
-            raise HTTPException(400, "Câu tự luận/bài tập phải có đáp án/thang điểm trước khi duyệt")
+        reason = _approve_reason(obj)
+        if reason:
+            raise HTTPException(400, f"{reason} — không thể duyệt")
         obj.reviewed_by = user.id
     prev = obj.review_status
     obj.review_status = to
@@ -268,6 +275,50 @@ def review_question(
     db.refresh(obj)
     log_action(db, user.id, "question", qid, "review", {"from": prev, "to": to})
     return obj
+
+
+@router.post("/courses/{course_id}/questions/approve-all")
+def approve_all_questions(
+    course_id: int,
+    only_ai: bool = False,
+    db: Session = Depends(get_db),
+    user: User = Depends(LECTURER),
+):
+    """Duyệt HÀNG LOẠT câu hỏi chưa duyệt của học phần (SPEC ngân hàng đề thi).
+
+    Đưa thẳng các câu draft/review/revise lên 'approved'. Bỏ qua câu không hợp lệ
+    (thiếu đáp án...) và trả về danh sách bỏ qua. only_ai=true: chỉ duyệt câu do AI tạo
+    (tag 'ai-generated').
+    """
+    if user.role not in (Role.PROGRAM_MANAGER.value, Role.ADMIN.value):
+        raise HTTPException(403, "Chỉ quản lý/trưởng bộ môn mới được duyệt câu hỏi")
+    if not db.get(Course, course_id):
+        raise HTTPException(404, "Không tìm thấy học phần")
+
+    candidates = (
+        db.query(Question)
+        .filter(
+            Question.course_id == course_id,
+            Question.is_deleted == False,  # noqa: E712
+            Question.review_status.in_(["draft", "review", "revise"]),
+        )
+        .all()
+    )
+    approved = 0
+    skipped: list[dict] = []
+    for q in candidates:
+        if only_ai and "ai-generated" not in (q.tags_json or []):
+            continue
+        reason = _approve_reason(q)
+        if reason:
+            skipped.append({"id": q.id, "reason": reason})
+            continue
+        q.review_status = "approved"
+        q.reviewed_by = user.id
+        approved += 1
+    db.commit()
+    log_action(db, user.id, "question", None, "approve_all", {"course_id": course_id, "approved": approved})
+    return {"approved": approved, "skipped": skipped, "skipped_count": len(skipped)}
 
 
 @router.delete("/questions/{qid}", status_code=204)
