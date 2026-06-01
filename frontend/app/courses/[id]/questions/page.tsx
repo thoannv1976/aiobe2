@@ -140,6 +140,8 @@ export default function QuestionsPage() {
   const [matrixGenBusy, setMatrixGenBusy] = useState(false);
   const [matrixGenMsg, setMatrixGenMsg] = useState("");
   const [matrixPoints, setMatrixPoints] = useState<number>(100);
+  const [assessments, setAssessments] = useState<any[]>([]);
+  const [genAssessmentId, setGenAssessmentId] = useState<string>("");
   const [matrixSummaries, setMatrixSummaries] = useState<Record<number, any>>({});
   const [matrixCoverage, setMatrixCoverage] = useState<Record<number, any>>({});
 
@@ -297,8 +299,14 @@ export default function QuestionsPage() {
       if (ol.length > 0) {
         const latest = ol.reduce((a, b) => (b.version > a.version ? b : a));
         setClos(await api(`/api/outlines/${latest.id}/clos`));
+        try {
+          setAssessments(await api(`/api/outlines/${latest.id}/assessments`));
+        } catch {
+          setAssessments([]);
+        }
       } else {
         setClos([]);
+        setAssessments([]);
       }
       setQuestions(await api(`/api/courses/${id}/questions`));
       setStats(await api(`/api/courses/${id}/questions/stats`));
@@ -523,7 +531,11 @@ export default function QuestionsPage() {
     try {
       await api(`/api/courses/${id}/matrices/generate`, {
         method: "POST",
-        body: JSON.stringify({ total_points: matrixPoints, name: matrixName }),
+        body: JSON.stringify({
+          total_points: matrixPoints,
+          name: matrixName,
+          assessment_id: genAssessmentId ? Number(genAssessmentId) : null,
+        }),
       });
       setMatrixGenMsg("Đã tạo ma trận đề thi bằng AI (bám ngân hàng hiện có). Hãy rà soát bên trên.");
       setMatrices(await api(`/api/courses/${id}/matrices`));
@@ -1012,6 +1024,22 @@ export default function QuestionsPage() {
                 onChange={(e) => setMatrixPoints(Number(e.target.value) || 100)}
                 className="mt-1 block w-24 rounded border p-1"
               />
+            </label>
+            <label className="text-sm">
+              Gắn cấu phần đánh giá
+              <select
+                value={genAssessmentId}
+                onChange={(e) => setGenAssessmentId(e.target.value)}
+                className="mt-1 block rounded border p-1"
+                title="Chỉ dùng CLO mà cấu phần này đánh giá (constructive alignment)"
+              >
+                <option value="">— Không gắn (toàn bộ CLO) —</option>
+                {assessments.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name} ({a.weight_percent}%)
+                  </option>
+                ))}
+              </select>
             </label>
             <button
               onClick={generateMatrixAI}
