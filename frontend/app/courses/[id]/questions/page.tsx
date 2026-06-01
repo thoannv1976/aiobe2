@@ -25,6 +25,13 @@ const TYPE: Record<string, string> = {
   exercise: "Bài tập",
 };
 
+const STATUS_VI: Record<string, string> = {
+  draft: "Nháp",
+  review: "Chờ duyệt",
+  approved: "Đã duyệt",
+  archived: "Lưu trữ",
+};
+
 interface Clo {
   id: number;
   code: string;
@@ -67,6 +74,8 @@ interface Matrix {
   course_id: number;
   name: string;
   cells: MatrixCell[];
+  status?: string;
+  total_points?: number;
 }
 
 interface QForm {
@@ -119,6 +128,48 @@ export default function QuestionsPage() {
   const [matrixGenBusy, setMatrixGenBusy] = useState(false);
   const [matrixGenMsg, setMatrixGenMsg] = useState("");
   const [matrixPoints, setMatrixPoints] = useState<number>(100);
+  const [matrixSummaries, setMatrixSummaries] = useState<Record<number, any>>({});
+
+  async function loadSummary(mid: number) {
+    setErr("");
+    try {
+      const s = await api(`/api/matrices/${mid}/summary`);
+      setMatrixSummaries((p) => ({ ...p, [mid]: s }));
+    } catch (e: any) {
+      setErr(e.message);
+    }
+  }
+
+  async function changeMatrixStatus(mid: number, to: string) {
+    setErr("");
+    try {
+      await api(`/api/matrices/${mid}/status?to=${to}`, { method: "POST" });
+      setMatrices(await api(`/api/courses/${id}/matrices`));
+    } catch (e: any) {
+      setErr(e.message);
+    }
+  }
+
+  async function duplicateMatrix(mid: number) {
+    setErr("");
+    try {
+      await api(`/api/matrices/${mid}/duplicate`, { method: "POST" });
+      setMatrices(await api(`/api/courses/${id}/matrices`));
+    } catch (e: any) {
+      setErr(e.message);
+    }
+  }
+
+  async function deleteMatrix(mid: number) {
+    if (!confirm("Xóa ma trận này?")) return;
+    setErr("");
+    try {
+      await api(`/api/matrices/${mid}`, { method: "DELETE" });
+      setMatrices(await api(`/api/courses/${id}/matrices`));
+    } catch (e: any) {
+      setErr(e.message);
+    }
+  }
 
   const [file, setFile] = useState<File | null>(null);
 
@@ -788,11 +839,63 @@ export default function QuestionsPage() {
         </div>
 
         <div className="mb-4 space-y-2">
-          {matrices.map((m) => (
-            <div key={m.id} className="rounded border bg-white p-4 shadow-sm text-sm">
-              <b>{m.name}</b> — {m.cells.length} ô
-            </div>
-          ))}
+          {matrices.map((m) => {
+            const sm = matrixSummaries[m.id];
+            const st = m.status || "draft";
+            const next: Record<string, string> = {
+              draft: "review", review: "approved", approved: "archived",
+            };
+            return (
+              <div key={m.id} className="rounded border bg-white p-4 text-sm shadow-sm">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span>
+                    <b>{m.name}</b> — {m.cells.length} ô · {m.total_points ?? 10} điểm{" "}
+                    <span className={`ml-1 rounded px-2 py-0.5 text-xs ${
+                      st === "approved" ? "bg-green-100 text-green-700"
+                      : st === "review" ? "bg-amber-100 text-amber-700"
+                      : st === "archived" ? "bg-slate-200 text-slate-600"
+                      : "bg-slate-100 text-slate-500"}`}>
+                      {STATUS_VI[st] ?? st}
+                    </span>
+                  </span>
+                  <div className="flex flex-wrap gap-1">
+                    <button onClick={() => loadSummary(m.id)} className="rounded bg-indigo-100 px-2 py-1 text-xs text-indigo-700 hover:bg-indigo-200">Tỷ trọng & cảnh báo</button>
+                    {next[st] && (
+                      <button onClick={() => changeMatrixStatus(m.id, next[st])} className="rounded bg-slate-100 px-2 py-1 text-xs hover:bg-slate-200">
+                        → {STATUS_VI[next[st]]}
+                      </button>
+                    )}
+                    <button onClick={() => duplicateMatrix(m.id)} className="rounded bg-slate-100 px-2 py-1 text-xs hover:bg-slate-200">Nhân bản</button>
+                    <button onClick={() => deleteMatrix(m.id)} className="rounded bg-red-100 px-2 py-1 text-xs text-red-700 hover:bg-red-200">Xóa</button>
+                  </div>
+                </div>
+                {sm && (
+                  <div className="mt-3 rounded bg-slate-50 p-3 text-xs">
+                    <div className="mb-1">
+                      <b>Tổng:</b> {sm.total_questions} câu · {sm.total_points}/{sm.declared_points} điểm
+                      {sm.ok ? <span className="ml-2 text-green-700">✓ hợp lệ</span> : <span className="ml-2 text-red-700">✗ chưa hợp lệ</span>}
+                    </div>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div>
+                        <b>Tỷ trọng theo CLO</b>
+                        {Object.entries(sm.clo_weight).map(([k, v]: any) => (
+                          <div key={k}>CLO id {k}: {v.points}đ ({v.percent}%)</div>
+                        ))}
+                      </div>
+                      <div>
+                        <b>Tỷ trọng theo Bloom</b>
+                        {Object.entries(sm.bloom_weight).map(([k, v]: any) => (
+                          <div key={k}>{BLOOM[k] ?? k}: {v.points}đ ({v.percent}%)</div>
+                        ))}
+                      </div>
+                    </div>
+                    {sm.errors.map((e: string) => <div key={e} className="mt-1 text-red-700">✗ {e}</div>)}
+                    {sm.warnings.map((w: string) => <div key={w} className="mt-1 text-amber-700">⚠ {w}</div>)}
+                  </div>
+                )}
+              </div>
+            );
+          })}
           {matrices.length === 0 && (
             <p className="text-slate-500">Chưa có ma trận.</p>
           )}
