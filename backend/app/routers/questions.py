@@ -3,6 +3,7 @@ import io
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.deps import get_current_user, require_roles
@@ -292,4 +293,77 @@ def create_matrix(
     db.commit()
     db.refresh(obj)
     log_action(db, user.id, "exam_matrix", obj.id, "create")
+    return ExamMatrixOut(id=obj.id, course_id=course_id, name=obj.name, cells=obj.cells_json)
+
+
+class MatrixGenIn(BaseModel):
+    total_points: float = 100
+    name: str = ""
+
+
+@router.post("/courses/{course_id}/matrices/generate", response_model=ExamMatrixOut, status_code=201)
+def generate_matrix(
+    course_id: int, payload: MatrixGenIn, db: Session = Depends(get_db), user: User = Depends(LECTURER)
+):
+    """AI tạo ma trận đề thi bám sát ngân hàng câu hỏi hiện có (SPEC mục 11)."""
+    from app.services.matrix_ai import generate_exam_matrix_ai
+
+    course = db.get(Course, course_id)
+    if not course:
+        raise HTTPException(404, "Không tìm thấy học phần")
+    clos = _latest_clos(db, course_id)
+    if not clos:
+        raise HTTPException(400, "Học phần chưa có đề cương/CLO. Hãy tạo đề cương trước.")
+    code_by_id = {c.id: c.code for c in clos}
+
+    # Thống kê ngân hàng theo tổ hợp (CLO×Bloom×độ khó) để ma trận khả thi.
+    avail: dict[tuple, int] = {}
+    for q in db.query(Question).filter(
+        Question.course_id == course_id, Question.is_deleted == False  # noqa: E712
+    ).all():
+        if q.clo_id in code_by_id:
+            key = (code_by_id[q.clo_id], q.bloom_level, q.difficulty)
+            avail[key] = avail.get(key, 0) + 1
+    bank_cells = [
+        {"clo_code": k[0], "bloom_level": k[1], "difficulty": k[2], "available": v}
+        for k, v in avail.items()
+    ]
+
+    try:
+        gen = generate_exam_matrix_ai(
+            course={"code": course.code, "name": course.name},
+            clos=[{"code": c.code, "description": c.description} for c in clos],
+            bank_cells=bank_cells,
+            total_points=payload.total_points,
+            name_hint=payload.name,
+        )
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(400, f"Sinh ma trận thất bại: {e}")
+
+    # Ánh xạ clo_code -> clo_id; chỉ giữ ô có câu sẵn (clamp số câu theo ngân hàng).
+    id_by_code = {c.code: c.id for c in clos}
+    cells = []
+    for cell in gen["cells"]:
+        code = cell.get("clo_code")
+        cid = id_by_code.get(code)
+        if cid is None:
+            continue
+        key = (code, cell.get("bloom_level"), cell.get("difficulty"))
+        available = avail.get(key, 0)
+        count = min(int(cell.get("count", 0) or 0), available)
+        if count <= 0:
+            continue
+        cells.append({
+            "clo_id": cid, "bloom_level": cell.get("bloom_level"),
+            "difficulty": cell.get("difficulty"), "count": count,
+            "points_each": cell.get("points_each"),
+        })
+    if not cells:
+        raise HTTPException(400, "AI không tạo được ô khả thi từ ngân hàng hiện có.")
+
+    obj = ExamMatrix(course_id=course_id, name=gen["name"], cells_json=cells)
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    log_action(db, user.id, "exam_matrix", obj.id, "generate_ai")
     return ExamMatrixOut(id=obj.id, course_id=course_id, name=obj.name, cells=obj.cells_json)

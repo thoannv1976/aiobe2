@@ -116,6 +116,9 @@ export default function QuestionsPage() {
 
   const [matrixName, setMatrixName] = useState("");
   const [cells, setCells] = useState<MatrixCell[]>([{ ...emptyCell }]);
+  const [matrixGenBusy, setMatrixGenBusy] = useState(false);
+  const [matrixGenMsg, setMatrixGenMsg] = useState("");
+  const [matrixPoints, setMatrixPoints] = useState<number>(100);
 
   const [file, setFile] = useState<File | null>(null);
 
@@ -313,6 +316,24 @@ export default function QuestionsPage() {
 
   function removeCell(idx: number) {
     setCells((prev) => prev.filter((_, i) => i !== idx));
+  }
+
+  async function generateMatrixAI() {
+    setErr("");
+    setMatrixGenMsg("");
+    setMatrixGenBusy(true);
+    try {
+      await api(`/api/courses/${id}/matrices/generate`, {
+        method: "POST",
+        body: JSON.stringify({ total_points: matrixPoints, name: matrixName }),
+      });
+      setMatrixGenMsg("Đã tạo ma trận đề thi bằng AI (bám ngân hàng hiện có). Hãy rà soát bên trên.");
+      setMatrices(await api(`/api/courses/${id}/matrices`));
+    } catch (e: any) {
+      setErr(e.message);
+    } finally {
+      setMatrixGenBusy(false);
+    }
   }
 
   async function createMatrix() {
@@ -728,6 +749,43 @@ export default function QuestionsPage() {
       {/* Ma trận đề thi */}
       <section>
         <h2 className="mb-2 text-lg font-semibold">Ma trận đề thi</h2>
+
+        {/* Tạo ma trận bằng AI (bám ngân hàng câu hỏi hiện có) */}
+        <div className="mb-4 rounded-lg border border-green-200 bg-green-50/40 p-4">
+          <h3 className="text-sm font-semibold">✨ Tạo ma trận đề thi bằng AI</h3>
+          <p className="mb-2 text-xs text-slate-600">
+            AI thiết kế ma trận (CLO × Bloom × độ khó) <b>bám sát số câu sẵn có trong ngân hàng</b>,
+            nên đề sinh ra sẽ đủ câu. Hãy rà soát/sửa sau khi tạo.
+          </p>
+          <div className="flex flex-wrap items-end gap-3">
+            <label className="text-sm">
+              Tên ma trận (tùy chọn)
+              <input
+                value={matrixName}
+                onChange={(e) => setMatrixName(e.target.value)}
+                className="mt-1 block w-56 rounded border p-1"
+                placeholder="VD: Ma trận cuối kỳ"
+              />
+            </label>
+            <label className="text-sm">
+              Tổng điểm
+              <input
+                type="number"
+                value={matrixPoints}
+                onChange={(e) => setMatrixPoints(Number(e.target.value) || 100)}
+                className="mt-1 block w-24 rounded border p-1"
+              />
+            </label>
+            <button
+              onClick={generateMatrixAI}
+              disabled={matrixGenBusy}
+              className="rounded bg-green-600 px-4 py-2 text-sm text-white disabled:opacity-50"
+            >
+              {matrixGenBusy ? "AI đang tạo..." : "Tạo ma trận bằng AI"}
+            </button>
+          </div>
+          {matrixGenMsg && <p className="mt-2 text-sm text-green-700">{matrixGenMsg}</p>}
+        </div>
 
         <div className="mb-4 space-y-2">
           {matrices.map((m) => (
