@@ -35,10 +35,22 @@ for r in (auth, programs, outlines, textbooks, questions, exams, extraction, rep
 @app.on_event("startup")
 def on_startup() -> None:
     # Dev tiện lợi (SQLite): tạo bảng nếu chưa có.
-    # Production (Postgres/Cloud SQL): schema do Alembic quản lý qua migrate job,
-    # không create_all để tránh xung đột với migration.
     if settings.database_url.startswith("sqlite"):
         Base.metadata.create_all(bind=engine)
+        return
+    # Production (Postgres/Cloud SQL): tự chạy migration khi khởi động để schema luôn
+    # khớp code, tránh lỗi 500 khi container deploy trước migrate job (idempotent, an toàn).
+    try:
+        from alembic import command
+        from alembic.config import Config
+
+        cfg = Config("alembic.ini")
+        command.upgrade(cfg, "head")
+    except Exception as e:  # noqa: BLE001
+        # Không chặn app khởi động nếu migrate lỗi (vd quyền) — log để theo dõi.
+        import logging
+
+        logging.getLogger("uvicorn.error").warning("Auto-migrate khi startup thất bại: %s", e)
 
 
 @app.get("/api/health")
