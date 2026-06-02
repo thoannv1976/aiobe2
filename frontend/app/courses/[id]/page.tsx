@@ -26,26 +26,33 @@ export default function CourseDetail() {
   const [bilingual, setBilingual] = useState<boolean>(true);
 
   async function load() {
-    try {
+    // Mỗi phần load độc lập: một API lỗi không làm trắng cả trang.
+    const safe = async (fn: () => Promise<void>) => {
+      try {
+        await fn();
+      } catch (e: any) {
+        setErr((prev) => prev || e.message);
+      }
+    };
+    await safe(async () => {
       const ol = await api(`/api/courses/${id}/outlines`);
       setOutlines(ol);
       const al: Record<number, any> = {};
-      for (const o of ol) al[o.id] = await api(`/api/outlines/${o.id}/alignment`);
+      for (const o of ol) {
+        try {
+          al[o.id] = await api(`/api/outlines/${o.id}/alignment`);
+        } catch {
+          /* bỏ qua alignment lỗi của 1 phiên bản */
+        }
+      }
       setAlignment(al);
-      setQuestions(await api(`/api/courses/${id}/questions`));
-      setStats(await api(`/api/courses/${id}/questions/stats`));
-      setMatrices(await api(`/api/courses/${id}/matrices`));
-      setExams(await api(`/api/courses/${id}/exams`));
-    } catch (e: any) {
-      setErr(e.message);
-    }
-    // Tài liệu tham chiếu load riêng (không chặn phần còn lại nếu thiếu quyền).
-    try {
-      setTemplates(await api(`/api/documents?type=outline_template`));
-      setAunqaDocs(await api(`/api/documents?type=aunqa_standard`));
-    } catch {
-      /* bỏ qua */
-    }
+    });
+    await safe(async () => setQuestions(await api(`/api/courses/${id}/questions`)));
+    await safe(async () => setStats(await api(`/api/courses/${id}/questions/stats`)));
+    await safe(async () => setMatrices(await api(`/api/courses/${id}/matrices`)));
+    await safe(async () => setExams(await api(`/api/courses/${id}/exams`)));
+    await safe(async () => setTemplates(await api(`/api/documents?type=outline_template`)));
+    await safe(async () => setAunqaDocs(await api(`/api/documents?type=aunqa_standard`)));
   }
   useEffect(() => {
     load();
