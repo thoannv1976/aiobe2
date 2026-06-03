@@ -44,6 +44,43 @@ export default function TextbooksPage() {
   const [deepPages, setDeepPages] = useState<number>(30);
   const [chapterBusy, setChapterBusy] = useState<number | null>(null);
   const [expandedChapter, setExpandedChapter] = useState<number | null>(null);
+  // Đánh giá + nâng cấp chương bằng AI
+  const [chReviews, setChReviews] = useState<Record<number, any>>({});
+  const [chReviewBusy, setChReviewBusy] = useState<number | null>(null);
+  const [chImproveBusy, setChImproveBusy] = useState<number | null>(null);
+
+  async function reviewChapter(ch: Chapter) {
+    setErr("");
+    setChReviewBusy(ch.id);
+    try {
+      const r = await api(`/api/chapters/${ch.id}/qa-review`);
+      setChReviews((p) => ({ ...p, [ch.id]: r }));
+    } catch (e: any) {
+      setErr(e.message);
+    } finally {
+      setChReviewBusy(null);
+    }
+  }
+
+  async function improveChapter(ch: Chapter) {
+    setErr("");
+    setGenMsg("");
+    setChImproveBusy(ch.id);
+    try {
+      await api(`/api/chapters/${ch.id}/improve`, {
+        method: "POST",
+        body: JSON.stringify({ qa: chReviews[ch.id] || null }),
+      });
+      if (selected) await loadChapters(selected);
+      setChReviews((p) => ({ ...p, [ch.id]: undefined }));
+      setExpandedChapter(ch.id);
+      setGenMsg(`Đã nâng cấp nội dung chương "${ch.title}".`);
+    } catch (e: any) {
+      setErr(e.message);
+    } finally {
+      setChImproveBusy(null);
+    }
+  }
 
   // Form thêm/sửa chương
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -525,6 +562,16 @@ export default function TextbooksPage() {
                             </button>
                             {hasContent && (
                               <button
+                                onClick={() => reviewChapter(ch)}
+                                disabled={chReviewBusy === ch.id}
+                                className="mr-2 rounded bg-indigo-600 px-2 py-1 text-xs text-white hover:bg-indigo-700 disabled:opacity-50"
+                                title="AI đánh giá chất lượng chương này"
+                              >
+                                {chReviewBusy === ch.id ? "⏳ Đánh giá..." : "✨ Đánh giá"}
+                              </button>
+                            )}
+                            {hasContent && (
+                              <button
                                 onClick={() =>
                                   setExpandedChapter(expandedChapter === ch.id ? null : ch.id)
                                 }
@@ -547,6 +594,45 @@ export default function TextbooksPage() {
                             </button>
                           </td>
                         </tr>
+                        {chReviews[ch.id] && (
+                          <tr>
+                            <td colSpan={4} className="border bg-indigo-50 p-3 text-xs">
+                              <div className="mb-1 flex items-center justify-between">
+                                <b>Đánh giá chất lượng chương (AI)</b>
+                                {typeof chReviews[ch.id].score === "number" && (
+                                  <span className="rounded bg-indigo-600 px-2 py-0.5 text-white">
+                                    Điểm: {chReviews[ch.id].score}/100
+                                  </span>
+                                )}
+                              </div>
+                              {chReviews[ch.id].summary && (
+                                <p className="mb-1 italic text-slate-700">{chReviews[ch.id].summary}</p>
+                              )}
+                              {(chReviews[ch.id].errors || []).map((e: string) => (
+                                <div key={e} className="text-red-700">✗ {e}</div>
+                              ))}
+                              {(chReviews[ch.id].warnings || []).map((w: string) => (
+                                <div key={w} className="text-amber-700">⚠ {w}</div>
+                              ))}
+                              {(chReviews[ch.id].suggestions || []).map((s: string) => (
+                                <div key={s} className="text-slate-600">• {s}</div>
+                              ))}
+                              <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-indigo-200 pt-2">
+                                <button
+                                  onClick={() => improveChapter(ch)}
+                                  disabled={chImproveBusy === ch.id}
+                                  className="rounded bg-indigo-600 px-3 py-1.5 font-medium text-white disabled:opacity-50"
+                                >
+                                  {chImproveBusy === ch.id ? "AI đang nâng cấp..." : "⚡ Nâng cấp chương bằng AI"}
+                                </button>
+                                <span className="text-slate-500">
+                                  AI viết lại chương khắc phục các điểm trên (bổ sung ví dụ, phủ đủ CLO,
+                                  hoàn thiện cấu trúc).
+                                </span>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
                         {expandedChapter === ch.id && hasContent && (
                           <tr>
                             <td colSpan={4} className="border bg-slate-50 p-3">

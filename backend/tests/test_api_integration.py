@@ -172,3 +172,50 @@ def test_matrix_qa_review_endpoint(client, monkeypatch):
     r = client.get(f"/api/matrices/{mid}/qa-review", headers=h)
     assert r.status_code == 200, r.text
     assert r.json()["score"] == 72
+
+
+def test_improve_chapter_endpoint(client, monkeypatch):
+    """AI nâng cấp nội dung chương giáo trình tại chỗ."""
+    from app.services import textbook_ai
+
+    h = {"Authorization": f"Bearer {_token(client)}"}
+    pid = client.post("/api/programs", json={"name": "PT", "code": "PT"}, headers=h).json()["id"]
+    cid = client.post(f"/api/programs/{pid}/courses",
+                      json={"code": "CT", "name": "Course T"}, headers=h).json()["id"]
+    tid = client.post("/api/textbooks", json={"course_id": cid, "title": "GT"}, headers=h).json()["id"]
+    chid = client.post(f"/api/textbooks/{tid}/chapters", json={
+        "order": 1, "title": "Chương 1", "content_richtext": "## Mở đầu\nsơ sài", "clo_ids": [],
+    }, headers=h).json()["id"]
+
+    monkeypatch.setattr(textbook_ai, "llm_complete",
+                        lambda system, user, max_tokens=8000: "## Mở đầu\nNội dung đã nâng cấp đầy đủ.")
+    qa = {"summary": "sơ sài", "errors": ["thiếu ví dụ"], "warnings": [], "suggestions": []}
+    r = client.post(f"/api/chapters/{chid}/improve", json={"qa": qa}, headers=h)
+    assert r.status_code == 200, r.text
+    assert "nâng cấp" in r.json()["content_richtext"]
+
+
+def test_improve_lecture_endpoint(client, monkeypatch):
+    """AI nâng cấp bài giảng tại chỗ (nội dung + slide)."""
+    import json as _json
+
+    from app.services import lecture_ai
+
+    h = {"Authorization": f"Bearer {_token(client)}"}
+    pid = client.post("/api/programs", json={"name": "PL", "code": "PL"}, headers=h).json()["id"]
+    cid = client.post(f"/api/programs/{pid}/courses",
+                      json={"code": "CL", "name": "Course L"}, headers=h).json()["id"]
+    lid = client.post(f"/api/courses/{cid}/lectures", json={
+        "session_no": 1, "title": "Buổi 1", "content_richtext": "## Mục tiêu\ncũ",
+        "slides_json": [], "clo_codes_json": [],
+    }, headers=h).json()["id"]
+
+    monkeypatch.setattr(lecture_ai, "llm_complete",
+                        lambda system, user, max_tokens=8000: _json.dumps({
+                            "content_markdown": "## Mục tiêu\nĐã nâng cấp",
+                            "slides": [{"title": "S1", "bullets": ["a"]}]}, ensure_ascii=False))
+    r = client.post(f"/api/lectures/{lid}/improve", json={"qa": {"warnings": ["thiếu ví dụ"]}}, headers=h)
+    assert r.status_code == 200, r.text
+    assert r.json()["slides"] == 1
+    got = client.get(f"/api/lectures/{lid}", headers=h).json()
+    assert "nâng cấp" in got["content_richtext"]

@@ -14,6 +14,8 @@ from app.services.textbook_ai import (
     generate_chapter_content_ai,
     generate_chapter_content_deep_ai,
     generate_chapter_outline_ai,
+    improve_chapter_ai,
+    review_chapter_ai,
 )
 
 router = APIRouter(prefix="/api", tags=["textbooks"])
@@ -223,6 +225,64 @@ def generate_chapter_content(
     db.commit()
     db.refresh(ch)
     log_action(db, user.id, "chapter", cid, "generate_content_ai")
+    res = ChapterOut.model_validate(ch)
+    res.clo_ids = clo_ids
+    return res
+
+
+def _chapter_course_clos(db: Session, cid: int):
+    """Trả (chapter, course_dict, clo_dicts, clo_ids) cho một chương."""
+    ch = db.get(Chapter, cid)
+    if not ch:
+        raise HTTPException(404, "Không tìm thấy chương")
+    tb = db.get(Textbook, ch.textbook_id)
+    course = db.get(Course, tb.course_id) if tb else None
+    clo_ids = [cc.clo_id for cc in db.query(ChapterClo).filter(ChapterClo.chapter_id == cid).all()]
+    clos = db.query(Clo).filter(Clo.id.in_(clo_ids or [-1])).all()
+    course_d = {"code": course.code if course else "", "name": course.name if course else ""}
+    clo_d = [{"code": c.code, "description": c.description} for c in clos]
+    return ch, course_d, clo_d, clo_ids
+
+
+@router.get("/chapters/{cid}/qa-review")
+def chapter_qa_review(cid: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+    """AI đánh giá chất lượng nội dung một chương giáo trình (độ phủ CLO, chiều sâu, cấu trúc)."""
+    ch, course_d, clo_d, _ids = _chapter_course_clos(db, cid)
+    if not (ch.content_richtext or "").strip():
+        raise HTTPException(400, "Chương chưa có nội dung để đánh giá.")
+    try:
+        return review_chapter_ai(course_d, ch.title, clo_d, ch.content_richtext or "")
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(400, f"Đánh giá chương thất bại: {e}")
+
+
+class ChapterImproveIn(BaseModel):
+    qa: dict | None = None
+
+
+@router.post("/chapters/{cid}/improve", response_model=ChapterOut)
+def improve_chapter(
+    cid: int,
+    payload: ChapterImproveIn | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(LECTURER),
+):
+    """Nâng cấp nội dung chương bằng AI dựa trên kết quả đánh giá (cập nhật tại chỗ)."""
+    ch, course_d, clo_d, clo_ids = _chapter_course_clos(db, cid)
+    if not (ch.content_richtext or "").strip():
+        raise HTTPException(400, "Chương chưa có nội dung để nâng cấp.")
+    try:
+        content = improve_chapter_ai(
+            course_d, ch.title, clo_d, ch.content_richtext or "",
+            payload.qa if payload else None,
+        )
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(400, f"Nâng cấp chương thất bại: {e}")
+    if content:
+        ch.content_richtext = content
+    db.commit()
+    db.refresh(ch)
+    log_action(db, user.id, "chapter", cid, "improve_ai")
     res = ChapterOut.model_validate(ch)
     res.clo_ids = clo_ids
     return res

@@ -19,7 +19,7 @@ from app.models import (
 )
 from app.services.audit import log_action
 from app.services.exports import lecture_to_docx, lecture_to_pptx
-from app.services.lecture_ai import generate_lecture_ai
+from app.services.lecture_ai import generate_lecture_ai, improve_lecture_ai, review_lecture_ai
 
 router = APIRouter(prefix="/api", tags=["lectures"])
 LECTURER = require_roles(Role.LECTURER, Role.PROGRAM_MANAGER)
@@ -164,6 +164,66 @@ def generate_lecture(course_id: int, payload: LectureGenIn, db: Session = Depend
     db.refresh(obj)
     log_action(db, user.id, "lecture", obj.id, "generate_ai")
     return {"id": obj.id, "slides": len(gen["slides"])}
+
+
+def _lecture_clos(db: Session, l: Lecture) -> list[dict]:
+    """CLO dicts cho bài giảng (theo clo_codes_json + đề cương mới nhất)."""
+    codes = set(l.clo_codes_json or [])
+    clos = [c for c in _latest_clos(db, l.course_id) if not codes or c.code in codes]
+    return [{"code": c.code, "description": c.description} for c in clos]
+
+
+@router.get("/lectures/{lid}/qa-review")
+def lecture_qa_review(lid: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+    """AI đánh giá chất lượng bài giảng (mục tiêu gắn CLO, cấu trúc sư phạm, slide)."""
+    l = db.get(Lecture, lid)
+    if not l:
+        raise HTTPException(404, "Không tìm thấy bài giảng")
+    if not (l.content_richtext or "").strip():
+        raise HTTPException(400, "Bài giảng chưa có nội dung để đánh giá.")
+    course = db.get(Course, l.course_id)
+    try:
+        return review_lecture_ai(
+            {"code": course.code if course else "", "name": course.name if course else ""},
+            l.title, _lecture_clos(db, l), l.content_richtext or "", len(l.slides_json or []),
+        )
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(400, f"Đánh giá bài giảng thất bại: {e}")
+
+
+class LectureImproveIn(BaseModel):
+    qa: dict | None = None
+
+
+@router.post("/lectures/{lid}/improve")
+def improve_lecture(
+    lid: int,
+    payload: LectureImproveIn | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(LECTURER),
+):
+    """Nâng cấp bài giảng bằng AI dựa trên kết quả đánh giá (cập nhật nội dung + slide tại chỗ)."""
+    l = db.get(Lecture, lid)
+    if not l:
+        raise HTTPException(404, "Không tìm thấy bài giảng")
+    if not (l.content_richtext or "").strip():
+        raise HTTPException(400, "Bài giảng chưa có nội dung để nâng cấp.")
+    course = db.get(Course, l.course_id)
+    try:
+        gen = improve_lecture_ai(
+            {"code": course.code if course else "", "name": course.name if course else ""},
+            l.title, _lecture_clos(db, l), l.content_richtext or "",
+            l.slides_json or [], payload.qa if payload else None,
+        )
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(400, f"Nâng cấp bài giảng thất bại: {e}")
+    if gen["content_markdown"]:
+        l.content_richtext = gen["content_markdown"]
+    if gen["slides"]:
+        l.slides_json = gen["slides"]
+    db.commit()
+    log_action(db, user.id, "lecture", lid, "improve_ai")
+    return {"id": lid, "slides": len(l.slides_json or [])}
 
 
 @router.get("/lectures/{lid}/export")

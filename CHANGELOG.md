@@ -20,6 +20,14 @@
   cấu phần đánh giá) trả điểm + cảnh báo + đề xuất; nút "⚡ Nâng cấp/Tối ưu AI" nay **bám kết quả
   đánh giá** để khắc phục đúng điểm yếu. Endpoint `GET /api/matrices/{id}/qa-review`; `optimize`
   nhận thêm tham số `qa`.
+- **Đánh giá + nâng cấp Giáo trình bằng AI** (4.4): với từng chương, AI chấm điểm chất lượng (độ
+  phủ CLO, chiều sâu học thuật, cấu trúc, ví dụ, câu hỏi ôn tập) và nút "⚡ Nâng cấp chương bằng AI"
+  viết lại nội dung khắc phục các điểm đó (cập nhật tại chỗ). Endpoint
+  `GET /api/chapters/{id}/qa-review`, `POST /api/chapters/{id}/improve`.
+- **Đánh giá + nâng cấp Bài giảng bằng AI** (mục 10): AI chấm điểm bài giảng (mục tiêu gắn CLO,
+  cấu trúc sư phạm đầy đủ, ví dụ/thảo luận/bài tập/kiểm tra nhanh, slide cô đọng) và nút "⚡ Nâng
+  cấp bài giảng bằng AI" viết lại nội dung + cập nhật slide. Endpoint
+  `GET /api/lectures/{id}/qa-review`, `POST /api/lectures/{id}/improve`.
 
 ## v1.0.0 — 2026-06-02
 

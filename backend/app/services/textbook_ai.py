@@ -136,3 +136,79 @@ def generate_chapter_content_deep_ai(
         if txt:
             parts.append(txt)
     return "\n\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Đánh giá + nâng cấp nội dung chương bằng AI (SPEC 4.4)
+# ---------------------------------------------------------------------------
+CHAPTER_QA_PROMPT = """Bạn là biên tập viên giáo trình đại học theo chuẩn OBE. Hãy ĐÁNH GIÁ chất lượng \
+NỘI DUNG MỘT CHƯƠNG giáo trình dựa trên các CLO liên quan.
+
+Kiểm tra theo tiêu chí:
+- Độ phủ CLO: nội dung có dạy đủ kiến thức/kỹ năng của các CLO gắn với chương không.
+- Tính chính xác và chiều sâu học thuật; lập luận mạch lạc.
+- Cấu trúc đầy đủ: mở đầu, các mục rõ ràng, VÍ DỤ minh họa, tóm tắt, câu hỏi ôn tập.
+- Độ dài/độ chi tiết phù hợp giáo trình đại học (không sơ sài, không chỉ là dàn ý).
+- Trình bày rõ ràng (Markdown: đề mục, danh sách, bảng nếu cần).
+
+Chỉ trả về DUY NHẤT JSON:
+{
+  "score": 0-100,
+  "summary": "nhận xét tổng quan ngắn gọn",
+  "errors": ["thiếu sót nghiêm trọng cần bổ sung"],
+  "warnings": ["điểm nên cải thiện"],
+  "suggestions": ["đề xuất cụ thể để nâng chất lượng chương"]
+}"""
+
+
+def _format_qa(qa: dict | None) -> str:
+    if not qa:
+        return ""
+    parts: list[str] = []
+    if qa.get("summary"):
+        parts.append(f"Nhận xét: {qa['summary']}")
+    for key, label in (("errors", "LỖI cần khắc phục"), ("warnings", "CẢNH BÁO"),
+                       ("suggestions", "ĐỀ XUẤT cải thiện")):
+        items = qa.get(key) or []
+        if items:
+            parts.append(f"{label}:\n" + "\n".join(f"- {x}" for x in items))
+    if not parts:
+        return ""
+    return "\n\nKẾT QUẢ ĐÁNH GIÁ CẦN KHẮC PHỤC:\n" + "\n\n".join(parts)
+
+
+def review_chapter_ai(course: dict, chapter_title: str, clos: list[dict], content: str) -> dict:
+    """Đánh giá chất lượng nội dung một chương. Trả {score,summary,errors,warnings,suggestions}."""
+    if not (content or "").strip():
+        raise ValueError("Chương chưa có nội dung để đánh giá.")
+    clo_lines = "\n".join(f"- {c['code']}: {c['description']}" for c in clos) or "(không có)"
+    user = (
+        f"HỌC PHẦN: {course.get('code','')} — {course.get('name','')}.\n"
+        f"CHƯƠNG: {chapter_title}\nCLO liên quan:\n{clo_lines}\n\n"
+        f"NỘI DUNG CHƯƠNG:\n\"\"\"\n{content[:30000]}\n\"\"\""
+    )
+    raw = llm_complete(CHAPTER_QA_PROMPT, user, max_tokens=3000)
+    return json.loads(_strip_to_json(raw))
+
+
+CHAPTER_IMPROVE_PROMPT = """Bạn là tác giả giáo trình đại học. Bạn được giao NỘI DUNG MỘT CHƯƠNG \
+kèm KẾT QUẢ ĐÁNH GIÁ chỉ ra điểm cần khắc phục. Hãy VIẾT LẠI (nâng cấp) chương để khắc phục từng điểm: \
+bổ sung phần còn thiếu, làm sâu nội dung học thuật, thêm ví dụ minh họa, đảm bảo phủ đủ CLO, \
+hoàn thiện cấu trúc (mở đầu, các mục, tóm tắt, câu hỏi ôn tập). GIỮ LẠI những phần đã tốt. \
+Định dạng Markdown (## cho mục). Chỉ trả về NỘI DUNG chương đã nâng cấp (Markdown thuần), KHÔNG kèm lời dẫn."""
+
+
+def improve_chapter_ai(course: dict, chapter_title: str, clos: list[dict],
+                       content: str, qa: dict | None = None) -> str:
+    """Nâng cấp nội dung chương dựa trên kết quả đánh giá. Trả về Markdown."""
+    if not (content or "").strip():
+        raise ValueError("Chương chưa có nội dung để nâng cấp.")
+    clo_lines = "\n".join(f"- {c['code']}: {c['description']}" for c in clos) or "(không có)"
+    user = (
+        f"HỌC PHẦN: {course.get('code','')} — {course.get('name','')}.\n"
+        f"CHƯƠNG: {chapter_title}\nCLO liên quan:\n{clo_lines}\n\n"
+        f"NỘI DUNG HIỆN TẠI:\n\"\"\"\n{content[:30000]}\n\"\"\""
+        + _format_qa(qa)
+        + "\n\nHãy viết lại chương đã nâng cấp."
+    )
+    return llm_complete(CHAPTER_IMPROVE_PROMPT, user, max_tokens=8000).strip()

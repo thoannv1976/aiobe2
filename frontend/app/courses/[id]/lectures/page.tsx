@@ -134,6 +134,47 @@ export default function LecturesPage() {
     }
   }
 
+  // Đánh giá + nâng cấp bài giảng bằng AI
+  const [lecReviews, setLecReviews] = useState<Record<number, any>>({});
+  const [lecReviewBusy, setLecReviewBusy] = useState<number | null>(null);
+  const [lecImproveBusy, setLecImproveBusy] = useState<number | null>(null);
+
+  async function reviewLecture(lid: number) {
+    setErr("");
+    setLecReviewBusy(lid);
+    try {
+      const r = await api(`/api/lectures/${lid}/qa-review`);
+      setLecReviews((p) => ({ ...p, [lid]: r }));
+    } catch (e: any) {
+      setErr(e.message);
+    } finally {
+      setLecReviewBusy(null);
+    }
+  }
+
+  async function improveLecture(lid: number) {
+    setErr("");
+    setGenMsg("");
+    setLecImproveBusy(lid);
+    try {
+      await api(`/api/lectures/${lid}/improve`, {
+        method: "POST",
+        body: JSON.stringify({ qa: lecReviews[lid] || null }),
+      });
+      setLecReviews((p) => ({ ...p, [lid]: undefined }));
+      await loadLectures();
+      // Mở lại nội dung mới nâng cấp.
+      const d: LectureDetail = await api(`/api/lectures/${lid}`);
+      setDetail(d);
+      setExpandedId(lid);
+      setGenMsg("Đã nâng cấp bài giảng bằng AI.");
+    } catch (e: any) {
+      setErr(e.message);
+    } finally {
+      setLecImproveBusy(null);
+    }
+  }
+
   function exportLecture(lid: number, format: "docx" | "pptx") {
     fetch(`${API_BASE}/api/lectures/${lid}/export?format=${format}`, {
       headers: { Authorization: `Bearer ${getToken()}` },
@@ -310,6 +351,16 @@ export default function LecturesPage() {
                       >
                         {expandedId === lec.id ? "Ẩn" : "Xem"}
                       </button>
+                      {lec.has_content && (
+                        <button
+                          onClick={() => reviewLecture(lec.id)}
+                          disabled={lecReviewBusy === lec.id}
+                          className="mr-2 rounded bg-indigo-600 px-2 py-1 text-xs text-white hover:bg-indigo-700 disabled:opacity-50"
+                          title="AI đánh giá chất lượng bài giảng"
+                        >
+                          {lecReviewBusy === lec.id ? "⏳ Đánh giá..." : "✨ Đánh giá"}
+                        </button>
+                      )}
                       <button
                         onClick={() => exportLecture(lec.id, "docx")}
                         className="mr-2 rounded bg-slate-100 px-2 py-1 text-xs hover:bg-slate-200"
@@ -330,6 +381,44 @@ export default function LecturesPage() {
                       </button>
                     </td>
                   </tr>
+                  {lecReviews[lec.id] && (
+                    <tr>
+                      <td colSpan={6} className="border bg-indigo-50 p-3 text-xs">
+                        <div className="mb-1 flex items-center justify-between">
+                          <b>Đánh giá chất lượng bài giảng (AI)</b>
+                          {typeof lecReviews[lec.id].score === "number" && (
+                            <span className="rounded bg-indigo-600 px-2 py-0.5 text-white">
+                              Điểm: {lecReviews[lec.id].score}/100
+                            </span>
+                          )}
+                        </div>
+                        {lecReviews[lec.id].summary && (
+                          <p className="mb-1 italic text-slate-700">{lecReviews[lec.id].summary}</p>
+                        )}
+                        {(lecReviews[lec.id].errors || []).map((e: string) => (
+                          <div key={e} className="text-red-700">✗ {e}</div>
+                        ))}
+                        {(lecReviews[lec.id].warnings || []).map((w: string) => (
+                          <div key={w} className="text-amber-700">⚠ {w}</div>
+                        ))}
+                        {(lecReviews[lec.id].suggestions || []).map((s: string) => (
+                          <div key={s} className="text-slate-600">• {s}</div>
+                        ))}
+                        <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-indigo-200 pt-2">
+                          <button
+                            onClick={() => improveLecture(lec.id)}
+                            disabled={lecImproveBusy === lec.id}
+                            className="rounded bg-indigo-600 px-3 py-1.5 font-medium text-white disabled:opacity-50"
+                          >
+                            {lecImproveBusy === lec.id ? "AI đang nâng cấp..." : "⚡ Nâng cấp bài giảng bằng AI"}
+                          </button>
+                          <span className="text-slate-500">
+                            AI viết lại bài giảng và cập nhật slide để khắc phục các điểm trên.
+                          </span>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
                   {expandedId === lec.id && detail && (
                     <tr>
                       <td colSpan={6} className="border bg-slate-50 p-3">
