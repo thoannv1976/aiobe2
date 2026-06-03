@@ -24,6 +24,7 @@ yarn-error.log*
 
 # Uploads / storage
 backend/storage/
+storage/
 uploads/
 
 # OS / editor

@@ -219,3 +219,95 @@ def test_improve_lecture_endpoint(client, monkeypatch):
     assert r.json()["slides"] == 1
     got = client.get(f"/api/lectures/{lid}", headers=h).json()
     assert "nâng cấp" in got["content_richtext"]
+
+
+def test_import_existing_outline_flow(client, monkeypatch):
+    """Phase 1+2: parse đề cương đã có (upload) → import draft → bảng sức khỏe có điểm."""
+    import json as _json
+
+    from app.services import outline_ai
+
+    h = {"Authorization": f"Bearer {_token(client)}"}
+    pid = client.post("/api/programs", json={"name": "PI2", "code": "PI2"}, headers=h).json()["id"]
+    client.post(f"/api/programs/{pid}/plos",
+                json={"code": "PLO1", "description": "Áp dụng"}, headers=h)
+    cid = client.post(f"/api/programs/{pid}/courses",
+                      json={"code": "IT101", "name": "Nhập môn"}, headers=h).json()["id"]
+
+    parsed = {
+        "detected_course_code": "IT101", "description": "Học phần cơ sở",
+        "teaching_methods": [], "references": [],
+        "clos": [
+            {"code": "CLO1", "description": "Hiểu", "description_en": "Understand",
+             "bloom_level": "understand", "plos": [{"plo_code": "PLO1", "level": "R"}]},
+            {"code": "CLO2", "description": "Vận dụng", "description_en": "Apply",
+             "bloom_level": "apply", "plos": [{"plo_code": "PLO99", "level": "M"}]},  # PLO sai → loại
+        ],
+        "assessments": [{"name": "Cuối kỳ", "type": "exam", "weight_percent": 100,
+                         "clo_codes": ["CLO1"], "rubric": []}],
+        "lessons": [{"week": 1, "topic": "GT", "clo_codes": ["CLO1"]}],
+    }
+    monkeypatch.setattr(outline_ai, "llm_complete",
+                        lambda system, user, max_tokens=12000: _json.dumps(parsed, ensure_ascii=False))
+
+    # 1) Parse upload (chưa lưu) → cảnh báo PLO chưa khớp.
+    r = client.post(f"/api/courses/{cid}/parse-outline", headers=h,
+                    files={"file": ("dc.txt", b"De cuong IT101 ...", "text/plain")})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["detected_course_code"] == "IT101"
+    assert "PLO99" in body["unmatched_plos"]
+    assert len(body["outline"]["clos"]) == 2
+
+    # 2) Import (lưu draft) dùng cấu trúc đã rà soát.
+    r = client.post(f"/api/courses/{cid}/import-outline", headers=h,
+                    json={"outline": body["outline"], "source_name": "dc.txt"})
+    assert r.status_code == 201, r.text
+    oid = r.json()["id"]
+    assert r.json()["status"] == "draft"
+
+    # 3) Tự chấm chất lượng → lưu snapshot.
+    from app.services import qa_review
+    monkeypatch.setattr(qa_review, "llm_complete",
+                        lambda system, user, max_tokens=8000: _json.dumps({
+                            "score": 64, "summary": "ổn", "errors": ["x"], "warnings": ["y", "z"],
+                            "clo_reviews": []}, ensure_ascii=False))
+    r = client.get(f"/api/outlines/{oid}/qa-review", headers=h)
+    assert r.status_code == 200, r.text
+    assert r.json()["score"] == 64
+
+    # 4) Bảng sức khỏe đề cương toàn ngành có điểm đã lưu.
+    r = client.get(f"/api/programs/{pid}/outline-health", headers=h)
+    assert r.status_code == 200, r.text
+    row = next(x for x in r.json()["rows"] if x["course_code"] == "IT101")
+    assert row["has_outline"] and row["qa_score"] == 64 and row["qa_errors"] == 1 and row["qa_warnings"] == 2
+
+
+def test_bulk_import_outlines(client, monkeypatch):
+    """Phase 3: import hàng loạt → khớp học phần theo mã phát hiện → lưu + chấm."""
+    import json as _json
+
+    from app.services import outline_ai, qa_review
+
+    h = {"Authorization": f"Bearer {_token(client)}"}
+    pid = client.post("/api/programs", json={"name": "PB", "code": "PB"}, headers=h).json()["id"]
+    client.post(f"/api/programs/{pid}/plos", json={"code": "PLO1", "description": "x"}, headers=h)
+    client.post(f"/api/programs/{pid}/courses", json={"code": "CS100", "name": "A"}, headers=h)
+
+    parsed = {"detected_course_code": "CS100", "description": "d", "teaching_methods": [],
+              "references": [], "clos": [{"code": "CLO1", "description": "Hiểu", "description_en": "U",
+              "bloom_level": "understand", "plos": [{"plo_code": "PLO1", "level": "R"}]}],
+              "assessments": [], "lessons": []}
+    monkeypatch.setattr(outline_ai, "llm_complete",
+                        lambda system, user, max_tokens=12000: _json.dumps(parsed, ensure_ascii=False))
+    monkeypatch.setattr(qa_review, "llm_complete",
+                        lambda system, user, max_tokens=8000: _json.dumps({
+                            "score": 80, "summary": "s", "errors": [], "warnings": [], "clo_reviews": []},
+                            ensure_ascii=False))
+
+    r = client.post(f"/api/programs/{pid}/import-outlines", headers=h,
+                    files=[("files", ("a.txt", b"De cuong CS100", "text/plain"))])
+    assert r.status_code == 200, r.text
+    rows = r.json()["results"]
+    assert rows[0]["matched"] and rows[0]["course_code"] == "CS100"
+    assert rows[0]["score"] == 80 and rows[0]["outline_id"]

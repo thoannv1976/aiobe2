@@ -3,6 +3,17 @@
 ## v1.1.0 — 2026-06-03
 
 ### Thêm mới
+- **Import đề cương ĐÃ CÓ + đánh giá/hoàn thiện bằng AI** (4.3) — 3 phase:
+  - *Phase 1:* upload đề cương sẵn có (PDF/DOCX/TXT, kể cả scan có OCR) → AI bóc tách thành cấu trúc
+    chuẩn (mô tả, CLO song ngữ, ma trận CLO×PLO, đánh giá + rubric, kế hoạch dạy) → **màn hình rà
+    soát/sửa** (đặc biệt ánh xạ CLO–PLO; mã PLO lạ bị loại + cảnh báo) → lưu thành đề cương draft.
+    File gốc được lưu làm minh chứng. Endpoint `POST /api/courses/{id}/parse-outline`,
+    `POST /api/courses/{id}/import-outline`.
+  - *Phase 2:* sau khi import, tự động chạy kiểm tra chất lượng (qa-review) và hiện điểm + lỗ hổng,
+    kèm nút ⚡ Nâng cấp. Mỗi lần chấm lưu snapshot điểm vào đề cương.
+  - *Phase 3:* **import hàng loạt** cho cả chương trình (ghép học phần theo mã phát hiện/tên file,
+    lưu draft + tự chấm) và **bảng "sức khỏe đề cương toàn ngành"** (điểm AI, số lỗi/cảnh báo từng
+    học phần). Endpoint `POST /api/programs/{id}/import-outlines`, `GET /api/programs/{id}/outline-health`.
 - **Nâng cấp đề cương bằng AI** sau khi kiểm tra chất lượng (4.3 / mục 14): từ kết quả kiểm tra
   chất lượng (điểm, lỗi, cảnh báo, gợi ý từng CLO), AI soạn lại toàn bộ đề cương khắc phục từng
   điểm — thống nhất thang đo CLO nhận thức/thái độ, bổ sung cấu phần đánh giá quá trình, cân

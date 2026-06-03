@@ -24,6 +24,10 @@ export default function CourseDetail() {
   const [numClos, setNumClos] = useState<string>("4–6");
   const [numWeeks, setNumWeeks] = useState<number>(15);
   const [bilingual, setBilingual] = useState<boolean>(true);
+  // Import đề cương đã có
+  const [importBusy, setImportBusy] = useState(false);
+  const [importParsed, setImportParsed] = useState<any>(null);
+  const [importDraft, setImportDraft] = useState<any>(null);
 
   async function load() {
     // Mỗi phần load độc lập: một API lỗi không làm trắng cả trang.
@@ -101,6 +105,60 @@ export default function CourseDetail() {
       await load();
     } catch (e: any) {
       setErr(e.message);
+    }
+  }
+
+  // ----- Import đề cương ĐÃ CÓ (Phase 1): upload → AI bóc tách → rà soát → lưu draft -----
+  async function importOutlineFile(file: File) {
+    setErr("");
+    setImportBusy(true);
+    setImportParsed(null);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await apiUpload(`/api/courses/${id}/parse-outline`, fd);
+      setImportParsed(res);
+      setImportDraft(JSON.parse(JSON.stringify(res.outline))); // bản chỉnh tay
+    } catch (e: any) {
+      setErr(e.message);
+    } finally {
+      setImportBusy(false);
+    }
+  }
+
+  function setCloPlos(idx: number, codesText: string) {
+    setImportDraft((d: any) => {
+      const next = { ...d, clos: [...d.clos] };
+      const codes = codesText.split(",").map((s) => s.trim()).filter(Boolean);
+      const old = next.clos[idx].plos || [];
+      const lvl: Record<string, string> = {};
+      for (const m of old) lvl[m.plo_code] = m.level || "R";
+      next.clos[idx] = { ...next.clos[idx], plos: codes.map((c) => ({ plo_code: c, level: lvl[c] || "R" })) };
+      return next;
+    });
+  }
+
+  function setCloField(idx: number, key: string, val: string) {
+    setImportDraft((d: any) => {
+      const next = { ...d, clos: [...d.clos] };
+      next.clos[idx] = { ...next.clos[idx], [key]: val };
+      return next;
+    });
+  }
+
+  async function saveImport() {
+    setErr("");
+    setImportBusy(true);
+    try {
+      const o = await api(`/api/courses/${id}/import-outline`, {
+        method: "POST",
+        body: JSON.stringify({ outline: importDraft, source_name: importParsed?.original_name || "" }),
+      });
+      // Sang trang đề cương và tự chạy đánh giá chất lượng (Phase 2).
+      window.location.href = `/outlines/${o.id}?review=1`;
+    } catch (e: any) {
+      setErr(e.message);
+      setImportBusy(false);
     }
   }
 
@@ -232,8 +290,90 @@ export default function CourseDetail() {
             <button onClick={createOutline} className="rounded bg-indigo-600 px-3 py-1 text-white">
               + Tạo đề cương trống
             </button>
+            <label className={`cursor-pointer rounded bg-amber-500 px-3 py-1 text-white ${importBusy ? "opacity-50" : ""}`}
+              title="Tải lên đề cương đã có (PDF/DOCX) để AI bóc tách, đánh giá và hoàn thiện">
+              {importBusy ? "Đang xử lý..." : "⬆ Import đề cương đã có"}
+              <input type="file" accept=".pdf,.docx,.txt" className="hidden" disabled={importBusy}
+                onChange={(e) => e.target.files?.[0] && importOutlineFile(e.target.files[0])} />
+            </label>
           </div>
         </div>
+
+        {/* Màn hình rà soát kết quả bóc tách đề cương đã có (Phase 1) */}
+        {importParsed && importDraft && (
+          <div className="mb-4 rounded border border-amber-300 bg-amber-50 p-4 text-sm">
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <b>Rà soát đề cương vừa bóc tách: {importParsed.original_name}</b>
+              <span className="text-xs text-slate-500">
+                Mã học phần phát hiện: {importParsed.detected_course_code || "—"}
+              </span>
+            </div>
+            {(importParsed.unmatched_plos?.length > 0 || importParsed.clos_without_plo?.length > 0) && (
+              <div className="mb-2 rounded border border-amber-400 bg-amber-100 p-2 text-xs text-amber-900">
+                {importParsed.unmatched_plos?.length > 0 && (
+                  <div>⚠ Mã PLO không thuộc chương trình (đã bỏ, hãy gán lại): {importParsed.unmatched_plos.join(", ")}</div>
+                )}
+                {importParsed.clos_without_plo?.length > 0 && (
+                  <div>⚠ CLO chưa ánh xạ PLO: {importParsed.clos_without_plo.join(", ")} — hãy nhập mã PLO bên dưới.</div>
+                )}
+              </div>
+            )}
+            <label className="block text-xs font-medium">Mô tả học phần</label>
+            <textarea value={importDraft.description || ""} rows={2}
+              onChange={(e) => setImportDraft((d: any) => ({ ...d, description: e.target.value }))}
+              className="mb-3 w-full rounded border p-2 text-xs" />
+            <table className="w-full border bg-white text-xs">
+              <thead>
+                <tr className="bg-slate-100">
+                  <th className="border p-1">CLO</th>
+                  <th className="border p-1 text-left">Mô tả</th>
+                  <th className="border p-1">Bloom</th>
+                  <th className="border p-1">PLO (mã, cách nhau dấu phẩy)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {importDraft.clos.map((c: any, i: number) => (
+                  <tr key={i}>
+                    <td className="border p-1 text-center font-medium">{c.code}</td>
+                    <td className="border p-1">
+                      <input value={c.description || ""} onChange={(e) => setCloField(i, "description", e.target.value)}
+                        className="w-full rounded border p-1" />
+                    </td>
+                    <td className="border p-1">
+                      <select value={c.bloom_level || ""} onChange={(e) => setCloField(i, "bloom_level", e.target.value)}
+                        className="rounded border p-1">
+                        {["", "remember", "understand", "apply", "analyze", "evaluate", "create"].map((b) => (
+                          <option key={b} value={b}>{b || "—"}</option>
+                        ))}
+                      </select>
+                    </td>
+                    <td className="border p-1">
+                      <input
+                        defaultValue={(c.plos || []).map((m: any) => m.plo_code).join(", ")}
+                        onBlur={(e) => setCloPlos(i, e.target.value)}
+                        placeholder="VD: PLO1, PLO3"
+                        className={`w-full rounded border p-1 ${(c.plos || []).length === 0 ? "border-amber-400 bg-amber-50" : ""}`}
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div className="mt-2 text-xs text-slate-600">
+              Bóc tách được <b>{importDraft.clos.length}</b> CLO ·{" "}
+              <b>{(importDraft.assessments || []).length}</b> cấu phần đánh giá ·{" "}
+              <b>{(importDraft.lessons || []).length}</b> buổi/tuần. Các phần này sẽ được lưu kèm.
+            </div>
+            <div className="mt-3 flex gap-2">
+              <button onClick={saveImport} disabled={importBusy}
+                className="rounded bg-amber-600 px-4 py-2 font-medium text-white disabled:opacity-50">
+                {importBusy ? "Đang lưu..." : "Lưu thành đề cương draft & đánh giá"}
+              </button>
+              <button onClick={() => { setImportParsed(null); setImportDraft(null); }}
+                className="rounded bg-slate-100 px-4 py-2 hover:bg-slate-200">Huỷ</button>
+            </div>
+          </div>
+        )}
         {outlines.map((o) => {
           const a = alignment[o.id];
           return (

@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { api } from "@/lib/api";
+import { api, apiUpload } from "@/lib/api";
 
 const LEVELS = ["", "I", "R", "M"];
 
@@ -18,6 +18,40 @@ export default function ProgramDetail() {
   const [ploReview, setPloReview] = useState<any>(null);
   const [ploReviewBusy, setPloReviewBusy] = useState(false);
   const [err, setErr] = useState("");
+  // Phase 3: import hàng loạt + bảng sức khỏe đề cương
+  const [health, setHealth] = useState<any>(null);
+  const [healthBusy, setHealthBusy] = useState(false);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkResults, setBulkResults] = useState<any[] | null>(null);
+
+  async function loadHealth() {
+    setErr("");
+    setHealthBusy(true);
+    try {
+      setHealth(await api(`/api/programs/${id}/outline-health`));
+    } catch (e: any) {
+      setErr(e.message);
+    } finally {
+      setHealthBusy(false);
+    }
+  }
+
+  async function bulkImport(files: FileList) {
+    setErr("");
+    setBulkResults(null);
+    setBulkBusy(true);
+    try {
+      const fd = new FormData();
+      Array.from(files).forEach((f) => fd.append("files", f));
+      const res = await apiUpload(`/api/programs/${id}/import-outlines`, fd);
+      setBulkResults(res.results || []);
+      await loadHealth();
+    } catch (e: any) {
+      setErr(e.message);
+    } finally {
+      setBulkBusy(false);
+    }
+  }
 
   async function reviewPlos() {
     setErr("");
@@ -208,6 +242,89 @@ export default function ProgramDetail() {
             </tbody>
           </table>
         </div>
+      </section>
+
+      {/* Phase 3: Import hàng loạt đề cương + Bảng sức khỏe đề cương toàn ngành */}
+      <section className="mt-6 rounded border border-amber-200 bg-amber-50/40 p-4">
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-lg font-semibold">Sức khỏe đề cương toàn ngành</h2>
+          <div className="flex flex-wrap gap-2">
+            <label className={`cursor-pointer rounded bg-amber-500 px-3 py-1.5 text-sm text-white ${bulkBusy ? "opacity-50" : ""}`}
+              title="Tải lên nhiều đề cương đã có (PDF/DOCX) — AI bóc tách, ghép học phần theo mã, lưu draft và chấm điểm">
+              {bulkBusy ? "Đang import..." : "⬆ Import hàng loạt đề cương"}
+              <input type="file" multiple accept=".pdf,.docx,.txt" className="hidden" disabled={bulkBusy}
+                onChange={(e) => e.target.files?.length && bulkImport(e.target.files)} />
+            </label>
+            <button onClick={loadHealth} disabled={healthBusy}
+              className="rounded bg-indigo-600 px-3 py-1.5 text-sm text-white disabled:opacity-50">
+              {healthBusy ? "Đang tải..." : "Xem bảng sức khỏe"}
+            </button>
+          </div>
+        </div>
+
+        {bulkResults && (
+          <div className="mb-3 rounded border bg-white p-2 text-xs">
+            <b>Kết quả import {bulkResults.length} file:</b>
+            {bulkResults.map((r, i) => (
+              <div key={i} className={r.matched ? "text-green-700" : "text-amber-700"}>
+                {r.matched ? "✓" : "⚠"} {r.filename} → {r.course_code || "(không khớp)"}
+                {r.score != null ? ` · điểm ${r.score}/100` : ""} · {r.message}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {health && (
+          <div className="overflow-x-auto">
+            <table className="min-w-full border bg-white text-sm">
+              <thead>
+                <tr className="bg-slate-100">
+                  <th className="border p-2 text-center">STT</th>
+                  <th className="border p-2 text-left">Học phần</th>
+                  <th className="border p-2">Đề cương</th>
+                  <th className="border p-2">Trạng thái</th>
+                  <th className="border p-2">Điểm AI</th>
+                  <th className="border p-2">Lỗi</th>
+                  <th className="border p-2">Cảnh báo</th>
+                </tr>
+              </thead>
+              <tbody>
+                {health.rows.map((r: any, i: number) => (
+                  <tr key={r.course_id}>
+                    <td className="border p-2 text-center text-slate-500">{i + 1}</td>
+                    <td className="border p-2">
+                      {r.outline_id ? (
+                        <Link href={`/outlines/${r.outline_id}`} className="text-indigo-700">
+                          {r.course_code} — {r.course_name}
+                        </Link>
+                      ) : (
+                        <span>{r.course_code} — {r.course_name}</span>
+                      )}
+                      {r.imported && <span className="ml-1 text-xs text-amber-600">(import)</span>}
+                    </td>
+                    <td className="border p-2 text-center">
+                      {r.has_outline ? `v${r.version}` : <span className="text-red-600">chưa có</span>}
+                    </td>
+                    <td className="border p-2 text-center text-xs">{r.status || "—"}</td>
+                    <td className="border p-2 text-center">
+                      {r.qa_score != null ? (
+                        <span className={`rounded px-2 py-0.5 text-xs text-white ${
+                          r.qa_score >= 80 ? "bg-green-600" : r.qa_score >= 60 ? "bg-amber-500" : "bg-red-600"}`}>
+                          {r.qa_score}
+                        </span>
+                      ) : "—"}
+                    </td>
+                    <td className="border p-2 text-center">{r.qa_errors ?? "—"}</td>
+                    <td className="border p-2 text-center">{r.qa_warnings ?? "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="mt-1 text-xs text-slate-500">
+              Điểm AI là kết quả lần chấm chất lượng gần nhất của mỗi đề cương. Mở từng đề cương để chấm/nâng cấp.
+            </p>
+          </div>
+        )}
       </section>
 
       <section className="mt-6">

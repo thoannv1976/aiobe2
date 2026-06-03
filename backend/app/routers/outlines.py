@@ -1,8 +1,12 @@
-from fastapi import APIRouter, Depends, HTTPException
+import os
+import uuid
+
+from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.core.deps import get_current_user, require_roles
 from app.database import get_db
 from app.models import (
@@ -34,11 +38,17 @@ from app.schemas.outline import (
     OutlineCreate,
     OutlineOut,
 )
+from app.schemas.outline_gen import GeneratedOutline
 from app.services.alignment import check_outline_alignment
 from app.services.audit import log_action
 from app.services.diff import diff_outlines
 from app.services.exports import outline_to_docx
-from app.services.outline_ai import generate_outline_ai, improve_outline_ai
+from app.services.extraction import extract_text_from_file
+from app.services.outline_ai import (
+    generate_outline_ai,
+    improve_outline_ai,
+    parse_outline_from_text,
+)
 
 router = APIRouter(prefix="/api", tags=["outline"])
 
@@ -523,9 +533,11 @@ def export_outline(outline_id: int, db: Session = Depends(get_db), _: User = Dep
     )
 
 
-@router.get("/outlines/{outline_id}/qa-review")
-def qa_review_outline(outline_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
-    """AI kiểm tra chất lượng đề cương: CLO đo được, alignment, đánh giá (SPEC mục 14)."""
+def _run_outline_qa(db: Session, outline_id: int) -> dict:
+    """Chạy AI kiểm tra chất lượng đề cương + LƯU snapshot điểm vào general_info_json
+    (để dựng bảng 'sức khỏe đề cương toàn ngành' mà không phải gọi lại LLM)."""
+    from datetime import datetime, timezone
+
     from app.services.qa_review import review_outline_ai
 
     outline = db.get(CourseOutline, outline_id)
@@ -534,7 +546,6 @@ def qa_review_outline(outline_id: int, db: Session = Depends(get_db), _: User = 
     course = db.get(Course, outline.course_id)
     clos = db.query(Clo).filter(Clo.outline_id == outline_id).all()
     clo_by_id = {c.id: c for c in clos}
-    # PLO codes cho mỗi CLO
     plo_map: dict[int, list[str]] = {c.id: [] for c in clos}
     for cp in db.query(CloPlo).filter(CloPlo.clo_id.in_([c.id for c in clos] or [-1])).all():
         plo = db.get(Plo, cp.plo_id)
@@ -557,13 +568,132 @@ def qa_review_outline(outline_id: int, db: Session = Depends(get_db), _: User = 
                  for lc in db.query(LessonPlanClo).filter(LessonPlanClo.lesson_plan_id == lp.id).all()
                  if lc.clo_id in clo_by_id]
         lessons.append({"topic": lp.topic, "clos": codes})
+    res = review_outline_ai({
+        "course": {"code": course.code if course else "", "name": course.name if course else ""},
+        "clos": clo_payload, "assessments": assessments, "lessons": lessons,
+    })
+    info = dict(outline.general_info_json or {})
+    info["qa_score"] = res.get("score")
+    info["qa_errors"] = len(res.get("errors") or [])
+    info["qa_warnings"] = len(res.get("warnings") or [])
+    info["qa_at"] = datetime.now(timezone.utc).isoformat()
+    outline.general_info_json = info
+    db.commit()
+    return res
+
+
+@router.get("/outlines/{outline_id}/qa-review")
+def qa_review_outline(outline_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+    """AI kiểm tra chất lượng đề cương: CLO đo được, alignment, đánh giá (SPEC mục 14)."""
     try:
-        return review_outline_ai({
-            "course": {"code": course.code if course else "", "name": course.name if course else ""},
-            "clos": clo_payload, "assessments": assessments, "lessons": lessons,
-        })
+        return _run_outline_qa(db, outline_id)
+    except HTTPException:
+        raise
     except Exception as e:  # noqa: BLE001
         raise HTTPException(400, f"Kiểm tra chất lượng thất bại: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Import đề cương ĐÃ CÓ (PDF/DOCX) → bóc tách bằng AI → rà soát → lưu draft (SPEC 4.3)
+# ---------------------------------------------------------------------------
+def _plo_by_code(db: Session, course: Course) -> dict[str, Plo]:
+    return {p.code: p for p in db.query(Plo).filter(Plo.program_id == course.program_id).all()}
+
+
+def _parse_uploaded_outline(db: Session, course: Course, text: str) -> dict:
+    """Bóc tách văn bản đề cương → dict {outline, detected_course_code, unmatched_plos}."""
+    plos = list(_plo_by_code(db, course).values())
+    plo_codes = {p.code for p in plos}
+    pis = db.query(Pi).filter(Pi.plo_id.in_([p.id for p in plos] or [-1])).all() if plos else []
+    plo_code_by_id = {p.id: p.code for p in plos}
+    gen, detected = parse_outline_from_text(
+        course={"code": course.code, "name": course.name},
+        plos=[{"code": p.code, "category": p.category or "", "description": p.description} for p in plos],
+        pis=[{"code": pi.code, "plo_code": plo_code_by_id.get(pi.plo_id, ""), "description": pi.description} for pi in pis],
+        text=text,
+    )
+    # Loại bỏ ánh xạ PLO không khớp chương trình (giữ dữ liệu sạch); ghi nhận để cảnh báo.
+    unmatched: set[str] = set()
+    for clo in gen.clos:
+        kept = []
+        for m in clo.plos:
+            if m.plo_code in plo_codes:
+                kept.append(m)
+            else:
+                unmatched.add(m.plo_code)
+        clo.plos = kept
+    return {
+        "outline": gen.model_dump(),
+        "detected_course_code": detected,
+        "unmatched_plos": sorted(unmatched),
+        "clos_without_plo": [c.code for c in gen.clos if not c.plos],
+    }
+
+
+@router.post("/courses/{course_id}/parse-outline")
+async def parse_outline_upload(
+    course_id: int,
+    file: UploadFile,
+    db: Session = Depends(get_db),
+    user: User = Depends(LECTURER),
+):
+    """Upload đề cương ĐÃ CÓ (PDF/DOCX/TXT) → AI bóc tách thành cấu trúc để RÀ SOÁT (chưa lưu).
+
+    Lưu file gốc làm minh chứng; trả về cấu trúc đề cương + cảnh báo PLO chưa khớp.
+    """
+    course = db.get(Course, course_id)
+    if not course:
+        raise HTTPException(404, "Không tìm thấy học phần")
+    os.makedirs(settings.storage_dir, exist_ok=True)
+    ext = os.path.splitext(file.filename or "")[1]
+    saved = os.path.join(settings.storage_dir, f"{uuid.uuid4().hex}{ext}")
+    with open(saved, "wb") as f:
+        f.write(await file.read())
+    try:
+        text = extract_text_from_file(saved, file.content_type)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(400, f"Không đọc được nội dung file: {e}")
+    doc = Document(
+        type="outline_template", file_path=saved, mime=file.content_type,
+        uploaded_by=user.id, original_name=file.filename, extracted_text=text,
+    )
+    db.add(doc)
+    db.commit()
+    db.refresh(doc)
+    try:
+        res = _parse_uploaded_outline(db, course, text)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(400, f"Bóc tách đề cương thất bại: {e}")
+    res["document_id"] = doc.id
+    res["original_name"] = doc.original_name
+    log_action(db, user.id, "outline", None, "parse_upload", {"course_id": course_id})
+    return res
+
+
+class ImportOutlineIn(BaseModel):
+    """Đề cương đã rà soát (có thể đã chỉnh tay) để lưu thành draft."""
+    outline: GeneratedOutline
+    source_name: str = ""
+
+
+@router.post("/courses/{course_id}/import-outline", response_model=OutlineOut, status_code=201)
+def import_outline(
+    course_id: int,
+    payload: ImportOutlineIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(LECTURER),
+):
+    """Lưu đề cương đã bóc tách/rà soát thành một phiên bản draft trong hệ thống (SPEC 4.3)."""
+    course = db.get(Course, course_id)
+    if not course:
+        raise HTTPException(404, "Không tìm thấy học phần")
+    if not payload.outline.clos:
+        raise HTTPException(400, "Đề cương chưa có CLO để lưu.")
+    plo_by_code = _plo_by_code(db, course)
+    info = {"imported": True, "source_name": payload.source_name or None}
+    outline = _write_generated_outline(db, course_id, payload.outline, plo_by_code, user, info)
+    log_action(db, user.id, "outline", outline.id, "import", {"course_id": course_id})
+    return outline
 
 
 class ImproveOutlineIn(BaseModel):
@@ -681,3 +811,132 @@ def improve_outline(
     log_action(db, user.id, "outline", new.id, "improve_ai",
                {"from": outline_id, "qa_score": qa.get("score")})
     return new
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: Import HÀNG LOẠT đề cương cho cả chương trình + bảng "sức khỏe đề cương"
+# ---------------------------------------------------------------------------
+def _latest_outline_by_course(db: Session, program_id: int) -> dict[int, CourseOutline]:
+    """Đề cương phiên bản mới nhất của mỗi học phần trong chương trình."""
+    courses = db.query(Course).filter(Course.program_id == program_id).all()
+    out: dict[int, CourseOutline] = {}
+    for c in courses:
+        latest = (
+            db.query(CourseOutline)
+            .filter(CourseOutline.course_id == c.id)
+            .order_by(CourseOutline.version.desc())
+            .first()
+        )
+        if latest:
+            out[c.id] = latest
+    return out
+
+
+@router.post("/programs/{program_id}/import-outlines")
+async def bulk_import_outlines(
+    program_id: int,
+    files: list[UploadFile],
+    run_qa: bool = True,
+    db: Session = Depends(get_db),
+    user: User = Depends(LECTURER),
+):
+    """Import nhiều đề cương cùng lúc cho một chương trình (SPEC 4.3, Phase 3).
+
+    Mỗi file: bóc tách bằng AI → ghép với học phần (theo mã học phần phát hiện được hoặc
+    có trong tên file) → lưu draft → (tùy chọn) tự chấm chất lượng. Trả bảng kết quả.
+    """
+    program = db.get(Program, program_id)
+    if not program:
+        raise HTTPException(404, "Không tìm thấy chương trình")
+    courses = db.query(Course).filter(Course.program_id == program_id).all()
+    by_code = {c.code.upper(): c for c in courses}
+    os.makedirs(settings.storage_dir, exist_ok=True)
+
+    results = []
+    for file in files:
+        row = {"filename": file.filename, "matched": False, "course_code": None,
+               "outline_id": None, "score": None, "errors": 0, "warnings": 0, "message": ""}
+        try:
+            ext = os.path.splitext(file.filename or "")[1]
+            saved = os.path.join(settings.storage_dir, f"{uuid.uuid4().hex}{ext}")
+            with open(saved, "wb") as f:
+                f.write(await file.read())
+            text = extract_text_from_file(saved, file.content_type)
+            doc = Document(type="outline_template", file_path=saved, mime=file.content_type,
+                           uploaded_by=user.id, original_name=file.filename, extracted_text=text)
+            db.add(doc)
+            db.commit()
+
+            # Bóc tách cần ngữ cảnh học phần để ánh xạ PLO. Bóc tách 1 lần với học phần đầu
+            # làm ngữ cảnh tạm để lấy detected_course_code, rồi ghép đúng học phần.
+            ctx_course = courses[0] if courses else None
+            if not ctx_course:
+                row["message"] = "Chương trình chưa có học phần nào."
+                results.append(row); continue
+            res = _parse_uploaded_outline(db, ctx_course, text)
+            detected = (res.get("detected_course_code") or "").upper()
+            fname_up = (file.filename or "").upper()
+            match = by_code.get(detected)
+            if not match:
+                match = next((c for code, c in by_code.items() if code and code in fname_up), None)
+            if not match:
+                row["message"] = f"Không khớp học phần (mã phát hiện: {detected or '—'})."
+                results.append(row); continue
+
+            # Bóc tách lại đúng ngữ cảnh học phần khớp (để ánh xạ PLO chuẩn).
+            if match.id != ctx_course.id:
+                res = _parse_uploaded_outline(db, match, text)
+            row["matched"] = True
+            row["course_code"] = match.code
+
+            gen = GeneratedOutline.model_validate(res["outline"])
+            if not gen.clos:
+                row["message"] = "Không bóc tách được CLO."
+                results.append(row); continue
+            outline = _write_generated_outline(
+                db, match.id, gen, _plo_by_code(db, match), user,
+                {"imported": True, "source_name": file.filename},
+            )
+            row["outline_id"] = outline.id
+            if run_qa:
+                try:
+                    qa = _run_outline_qa(db, outline.id)
+                    row["score"] = qa.get("score")
+                    row["errors"] = len(qa.get("errors") or [])
+                    row["warnings"] = len(qa.get("warnings") or [])
+                except Exception as e:  # noqa: BLE001
+                    row["message"] = f"Đã lưu nhưng chấm chất lượng lỗi: {e}"
+            row["message"] = row["message"] or "OK"
+        except Exception as e:  # noqa: BLE001
+            row["message"] = f"Lỗi: {e}"
+        results.append(row)
+
+    log_action(db, user.id, "outline", None, "bulk_import",
+               {"program_id": program_id, "count": len(files)})
+    return {"program_id": program_id, "results": results}
+
+
+@router.get("/programs/{program_id}/outline-health")
+def outline_health(program_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+    """Bảng 'sức khỏe đề cương toàn ngành': mỗi học phần + đề cương mới nhất + điểm chất lượng đã chấm."""
+    program = db.get(Program, program_id)
+    if not program:
+        raise HTTPException(404, "Không tìm thấy chương trình")
+    latest = _latest_outline_by_course(db, program_id)
+    rows = []
+    for c in db.query(Course).filter(Course.program_id == program_id).order_by(Course.id).all():
+        o = latest.get(c.id)
+        info = (o.general_info_json or {}) if o else {}
+        rows.append({
+            "course_id": c.id, "course_code": c.code, "course_name": c.name,
+            "has_outline": o is not None,
+            "outline_id": o.id if o else None,
+            "version": o.version if o else None,
+            "status": o.status if o else None,
+            "qa_score": info.get("qa_score"),
+            "qa_errors": info.get("qa_errors"),
+            "qa_warnings": info.get("qa_warnings"),
+            "qa_at": info.get("qa_at"),
+            "imported": bool(info.get("imported")),
+        })
+    return {"program_id": program_id, "rows": rows}

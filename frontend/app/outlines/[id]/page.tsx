@@ -101,6 +101,10 @@ export default function OutlineEditor() {
       return;
     }
     load();
+    // Phase 2: vừa import xong (?review=1) → tự chạy đánh giá chất lượng.
+    if (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("review") === "1") {
+      qaReview();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 

@@ -88,6 +88,65 @@ def _strip_to_json(text: str) -> str:
     return t[start : end + 1] if start != -1 and end != -1 else t
 
 
+# ---------------------------------------------------------------------------
+# Phân tích (parse) đề cương ĐÃ CÓ từ văn bản upload thành cấu trúc chuẩn (SPEC 4.3)
+# ---------------------------------------------------------------------------
+PARSE_SYSTEM_PROMPT = """Bạn là chuyên gia thiết kế chương trình đào tạo theo OBE/AUN-QA. \
+Bạn được cung cấp VĂN BẢN THÔ của một ĐỀ CƯƠNG HỌC PHẦN ĐÃ CÓ (trích từ file Word/PDF). \
+Nhiệm vụ: BÓC TÁCH nội dung đề cương đó thành cấu trúc chuẩn — GIỮ NGUYÊN nội dung gốc, KHÔNG bịa thêm.
+
+Quy tắc bóc tách:
+- detected_course_code: mã học phần đọc được trong văn bản (nếu có), nếu không thì để rỗng.
+- description: mô tả/giới thiệu học phần lấy từ văn bản.
+- teaching_methods, references: liệt kê đúng những gì văn bản nêu (mỗi mục một phần tử).
+- clos: mỗi CLO lấy đúng nội dung gốc; 'description' tiếng Việt; 'description_en' là bản dịch tiếng Anh \
+(tự dịch nếu văn bản chưa có); 'bloom_level' suy ra từ động từ của CLO.
+- Ánh xạ PLO: với mỗi CLO, CHỈ dùng các mã PLO có trong DANH SÁCH PLO được cung cấp. Nếu văn bản nêu rõ \
+ánh xạ CLO–PLO thì theo đúng đó (kèm mức I/R/M nếu có); nếu KHÔNG rõ ràng thì để 'plos' rỗng \
+(KHÔNG đoán bừa) — con người sẽ bổ sung sau.
+- assessments: lấy đúng các cấu phần đánh giá + trọng số (%) trong văn bản; kèm rubric nếu có; \
+'clo_codes' là các CLO mà cấu phần đó đánh giá (nếu văn bản nêu).
+- lessons: lấy kế hoạch giảng dạy theo tuần/buổi nếu có (week, topic, clo_codes).
+
+Chỉ trả về DUY NHẤT một JSON hợp lệ (không markdown, không văn bản thừa) theo schema:
+{{
+  "detected_course_code": "",
+  "description": "",
+  "teaching_methods": ["..."],
+  "references": ["..."],
+  "clos": [{{"code":"CLO1","description":"","description_en":"","bloom_level":"remember|understand|apply|analyze|evaluate|create","plos":[{{"plo_code":"PLO1","level":"I|R|M"}}]}}],
+  "assessments": [{{"name":"","type":"","weight_percent":0,"clo_codes":["CLO1"],"rubric":[{{"name":"","weight_percent":0,"levels":["..."]}}]}}],
+  "lessons": [{{"week":1,"topic":"","clo_codes":["CLO1"]}}]
+}}
+Chỉ dùng các mã PLO có trong dữ liệu được cung cấp. Nếu một thông tin không có trong văn bản, để trống/[]."""
+
+
+def parse_outline_from_text(
+    course: dict, plos: list[dict], pis: list[dict], text: str
+) -> tuple[GeneratedOutline, str]:
+    """Bóc tách đề cương đã có (văn bản thô) thành GeneratedOutline.
+
+    Trả (outline, detected_course_code). Chỉ ánh xạ PLO trong danh sách được cấp;
+    CLO không rõ PLO sẽ để trống cho con người bổ sung (human-in-the-loop).
+    """
+    if not (text or "").strip():
+        raise ValueError("Văn bản đề cương rỗng — không bóc tách được.")
+    plo_lines = "\n".join(
+        f"- {p['code']} [{p.get('category','')}]: {p['description']}" for p in plos
+    ) or "(chưa có PLO)"
+    pi_lines = "\n".join(f"- {pi['code']} (thuộc {pi['plo_code']}): {pi['description']}" for pi in pis)
+    parts = [
+        f"HỌC PHẦN (theo hệ thống): {course.get('code','')} — {course.get('name','')}.",
+        f"\nDANH SÁCH PLO CỦA CHƯƠNG TRÌNH (chỉ ánh xạ trong số này):\n{plo_lines}",
+        f"\nCHỈ BÁO PI:\n{pi_lines}" if pi_lines else "",
+        f"\n===== VĂN BẢN ĐỀ CƯƠNG ĐÃ CÓ (bóc tách nội dung này) =====\n\"\"\"\n{text[:40000]}\n\"\"\"",
+    ]
+    raw = llm_complete(PARSE_SYSTEM_PROMPT, "\n".join(p for p in parts if p), max_tokens=12000)
+    data = json.loads(_strip_to_json(raw))
+    detected = str(data.pop("detected_course_code", "") or "")
+    return GeneratedOutline.model_validate(data), detected
+
+
 IMPROVE_SYSTEM_PROMPT = """Bạn là chuyên gia thiết kế chương trình đào tạo theo chuẩn OBE \
 (Outcome-Based Education) và kiểm định AUN-QA. Bạn được giao một ĐỀ CƯƠNG HỌC PHẦN hiện có \
 KÈM KẾT QUẢ KIỂM TRA CHẤT LƯỢNG (AI) chỉ ra các lỗi/cảnh báo cần khắc phục.
