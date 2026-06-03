@@ -91,12 +91,29 @@ với ngân hàng, và liên kết CLO-PLO/đánh giá."
 Dùng đúng mã CLO và các mức Bloom/độ khó được cung cấp."""
 
 
+def _format_matrix_qa(qa: dict | None) -> str:
+    """Định dạng kết quả đánh giá AUN-QA (nếu có) để đưa vào prompt tối ưu."""
+    if not qa:
+        return ""
+    parts: list[str] = []
+    if qa.get("errors"):
+        parts.append("LỖI cần khắc phục:\n" + "\n".join(f"- {e}" for e in qa["errors"]))
+    if qa.get("warnings"):
+        parts.append("CẢNH BÁO nên xử lý:\n" + "\n".join(f"- {w}" for w in qa["warnings"]))
+    if qa.get("suggestions"):
+        parts.append("ĐỀ XUẤT cải thiện:\n" + "\n".join(f"- {s}" for s in qa["suggestions"]))
+    if not parts:
+        return ""
+    return "\n\nCÁC ĐIỂM CẦN KHẮC PHỤC THEO ĐÁNH GIÁ AUN-QA:\n" + "\n".join(parts)
+
+
 def optimize_exam_matrix_ai(
     course: dict,
     clos: list[dict],
     bank_cells: list[dict],            # [{clo_code, bloom_level, difficulty, available}] (Approved)
     current_cells: list[dict],         # ma trận hiện tại [{clo_code,bloom_level,difficulty,count,points_each}]
     total_points: float = 10,
+    qa: dict | None = None,            # kết quả đánh giá AUN-QA (nếu có) để bám vào mà sửa
 ) -> dict:
     """Tối ưu ma trận hiện có. Trả {name, cells, rationale}."""
     if not clos:
@@ -119,8 +136,9 @@ def optimize_exam_matrix_ai(
         f"CÁC CLO:\n{clo_lines}\n\n"
         f"NGÂN HÀNG (câu Đã duyệt theo tổ hợp):\n{bank_lines}\n\n"
         f"MA TRẬN HIỆN TẠI (cần tối ưu):\n{cur_lines}\n\n"
-        f"Thang điểm khai báo: {total_points}.\n"
-        "Hãy tối ưu ma trận này."
+        f"Thang điểm khai báo: {total_points}."
+        + _format_matrix_qa(qa)
+        + "\nHãy tối ưu ma trận này."
     )
     raw = llm_complete(OPTIMIZE_PROMPT, user, max_tokens=4000)
     data = json.loads(_strip_to_json(raw))

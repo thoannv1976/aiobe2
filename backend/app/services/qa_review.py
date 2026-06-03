@@ -107,3 +107,113 @@ def review_outline_ai(payload: dict) -> dict:
     )
     raw = llm_complete(OUTLINE_QA_PROMPT, user, max_tokens=8000)
     return json.loads(_strip_to_json(raw))
+
+
+# ---------------------------------------------------------------------------
+# QA Reviewer NGÂN HÀNG CÂU HỎI (SPEC 4.5): rà chất lượng từng câu + tổng thể
+# ---------------------------------------------------------------------------
+QUESTION_QA_PROMPT = """Bạn là chuyên gia khảo thí theo chuẩn OBE/AUN-QA. Hãy rà soát chất lượng \
+NGÂN HÀNG CÂU HỎI của một học phần.
+
+Kiểm tra và CHỈ RA LỖI (nếu có) theo các tiêu chí:
+- Câu hỏi có gắn ĐÚNG CLO và mức Bloom có khớp nội dung câu hỏi không (vd câu chỉ "nhớ" mà gán "analyze").
+- Trắc nghiệm: đủ phương án, có đáp án đúng rõ ràng, các phương án nhiễu hợp lý, KHÔNG lộ đáp án/đáp án trùng.
+- Tự luận/bài tập: có đáp án/thang điểm và RUBRIC chấm điểm.
+- Nội dung chính xác học thuật, rõ ràng, KHÔNG mơ hồ, KHÔNG trùng lặp với câu khác.
+- Có giải thích đáp án (explanation) và nguồn (source) hợp lý.
+- Tổng thể: độ phủ CLO và cân đối mức Bloom/độ khó của ngân hàng (không dồn hết vào Nhớ/Hiểu/dễ).
+
+Với mỗi câu có vấn đề, nêu severity ("error" nếu nghiêm trọng phải sửa, "warning" nếu nên xem lại), \
+liệt kê issues và một suggestion sửa ngắn gọn. Câu đạt thì KHÔNG cần liệt kê (để giảm độ dài).
+
+Chỉ trả về DUY NHẤT JSON:
+{
+  "score": 0-100,
+  "summary": "nhận xét tổng quan ngắn gọn (độ phủ CLO, cân đối Bloom, chất lượng chung)",
+  "errors": ["lỗi cấp ngân hàng cần sửa"],
+  "warnings": ["cảnh báo cấp ngân hàng"],
+  "question_reviews": [{"id": 12, "severity":"error|warning", "issues":["..."], "suggestion":"..."}]
+}"""
+
+# Giới hạn số câu đưa vào một lần rà soát (an toàn độ dài prompt).
+MAX_QUESTIONS_REVIEW = 60
+
+
+def _question_line(q: dict) -> str:
+    opts = q.get("options") or []
+    opt_txt = (" | PA: " + " / ".join(str(o) for o in opts)) if opts else ""
+    rub = "có rubric" if q.get("has_rubric") else "KHÔNG rubric"
+    return (
+        f"[id={q['id']}] CLO {q.get('clo_code','?')} | {q.get('type','')} | "
+        f"Bloom={q.get('bloom_level','')} | độ khó={q.get('difficulty','')} | {rub}\n"
+        f"  Nội dung: {q.get('content','')}{opt_txt}\n"
+        f"  Đáp án: {q.get('answer','') or '(trống)'} | Giải thích: {q.get('explanation','') or '(trống)'}"
+    )
+
+
+def review_questions_ai(course: dict, questions: list[dict]) -> dict:
+    """Rà soát chất lượng ngân hàng câu hỏi. questions: [{id,clo_code,bloom_level,
+    difficulty,type,content,options,answer,explanation,has_rubric}]."""
+    if not questions:
+        raise ValueError("Ngân hàng câu hỏi đang trống — chưa có câu để rà soát.")
+    lines = "\n".join(_question_line(q) for q in questions[:MAX_QUESTIONS_REVIEW])
+    user = (
+        f"HỌC PHẦN: {course.get('code','')} — {course.get('name','')}.\n"
+        f"DANH SÁCH CÂU HỎI ({min(len(questions), MAX_QUESTIONS_REVIEW)} câu):\n{lines}"
+    )
+    raw = llm_complete(QUESTION_QA_PROMPT, user, max_tokens=8000)
+    return json.loads(_strip_to_json(raw))
+
+
+# ---------------------------------------------------------------------------
+# QA Reviewer MA TRẬN ĐỀ THI (SPEC mục 11/12): đánh giá blueprint theo AUN-QA
+# ---------------------------------------------------------------------------
+MATRIX_QA_PROMPT = """Bạn là chuyên gia khảo thí và kiểm định AUN-QA (Criterion 4 - Student Assessment). \
+Hãy ĐÁNH GIÁ một MA TRẬN ĐỀ THI (test blueprint) của học phần.
+
+Kiểm tra theo tiêu chí:
+- TỔNG ĐIỂM có bằng đúng thang điểm khai báo không.
+- Độ phủ CLO: ma trận có đo đủ các CLO trọng yếu (đặc biệt CLO của cấu phần đánh giá gắn kèm) không.
+- Cân đối mức Bloom: có tỷ lệ hợp lý cho mức bậc cao (Vận dụng/Phân tích/Đánh giá), không dồn hết vào Nhớ/Hiểu.
+- Tính khả thi với ngân hàng: số câu mỗi ô không vượt số câu Đã duyệt sẵn có.
+- Constructive alignment với cấu phần đánh giá của đề cương (nếu có).
+
+Chỉ trả về DUY NHẤT JSON:
+{
+  "score": 0-100,
+  "summary": "nhận xét tổng quan ngắn gọn",
+  "errors": ["lỗi nghiêm trọng cần sửa"],
+  "warnings": ["cảnh báo nên xem lại"],
+  "suggestions": ["đề xuất cải thiện cụ thể"]
+}"""
+
+
+def review_matrix_ai(payload: dict) -> dict:
+    """payload: {course, name, total_points, cells:[{clo_code,bloom_level,difficulty,count,points_each}],
+    bank_cells:[{clo_code,bloom_level,difficulty,available}], assessment:{name,clo_codes}}."""
+    cells = payload.get("cells", [])
+    if not cells:
+        raise ValueError("Ma trận chưa có ô nào để đánh giá.")
+    cur = "\n".join(
+        f"- {c.get('clo_code')} × {c.get('bloom_level')} × {c.get('difficulty')}: "
+        f"{c.get('count')} câu × {c.get('points_each')}đ"
+        for c in cells
+    )
+    bank = "\n".join(
+        f"- {b['clo_code']} × {b['bloom_level']} × {b['difficulty']}: có {b.get('available',0)} câu Đã duyệt"
+        for b in payload.get("bank_cells", []) if b.get("available", 0) > 0
+    ) or "(không có dữ liệu ngân hàng)"
+    a = payload.get("assessment") or {}
+    a_txt = (
+        f"\nCẤU PHẦN ĐÁNH GIÁ GẮN KÈM: {a.get('name','')} — cần đo CLO: "
+        f"{', '.join(a.get('clo_codes', [])) or '(không rõ)'}." if a else ""
+    )
+    course = payload.get("course", {})
+    user = (
+        f"HỌC PHẦN: {course.get('code','')} — {course.get('name','')}.\n"
+        f"MA TRẬN '{payload.get('name','')}' — thang điểm khai báo: {payload.get('total_points')}.\n"
+        f"CÁC Ô (CLO×Bloom×độ khó):\n{cur}\n\n"
+        f"NGÂN HÀNG (câu Đã duyệt theo tổ hợp):\n{bank}{a_txt}"
+    )
+    raw = llm_complete(MATRIX_QA_PROMPT, user, max_tokens=4000)
+    return json.loads(_strip_to_json(raw))

@@ -168,12 +168,32 @@ export default function QuestionsPage() {
 
   const [optimizeBusy, setOptimizeBusy] = useState<number | null>(null);
   const [matrixRationale, setMatrixRationale] = useState<Record<number, string>>({});
+  // Đánh giá AUN-QA của ma trận (theo mid) + trạng thái bận khi đánh giá.
+  const [matrixReviews, setMatrixReviews] = useState<Record<number, any>>({});
+  const [matrixReviewBusy, setMatrixReviewBusy] = useState<number | null>(null);
+
+  async function reviewMatrix(mid: number) {
+    setErr("");
+    setMatrixReviewBusy(mid);
+    try {
+      const r = await api(`/api/matrices/${mid}/qa-review`);
+      setMatrixReviews((p) => ({ ...p, [mid]: r }));
+    } catch (e: any) {
+      setErr(e.message);
+    } finally {
+      setMatrixReviewBusy(null);
+    }
+  }
 
   async function optimizeMatrix(mid: number) {
     setErr("");
     setOptimizeBusy(mid);
     try {
-      const r = await api(`/api/matrices/${mid}/optimize`, { method: "POST" });
+      // Bám kết quả đánh giá AUN-QA (nếu đã chạy) để AI khắc phục đúng điểm yếu.
+      const r = await api(`/api/matrices/${mid}/optimize`, {
+        method: "POST",
+        body: JSON.stringify({ qa: matrixReviews[mid] || null }),
+      });
       setMatrices(await api(`/api/courses/${id}/matrices`));
       // Tự mở tỷ trọng + giải thích để người dùng thấy kết quả tối ưu ngay.
       await loadSummary(mid);
@@ -291,6 +311,48 @@ export default function QuestionsPage() {
       setErr(e.message);
     } finally {
       setGenBusy(false);
+    }
+  }
+
+  // Đánh giá + nâng cấp ngân hàng câu hỏi bằng AI
+  const [qbReview, setQbReview] = useState<any>(null);
+  const [qbReviewBusy, setQbReviewBusy] = useState(false);
+  const [qbImproveBusy, setQbImproveBusy] = useState(false);
+  const [qbImproveMsg, setQbImproveMsg] = useState("");
+
+  async function reviewQuestionBank() {
+    setErr("");
+    setQbImproveMsg("");
+    setQbReview(null);
+    setQbReviewBusy(true);
+    try {
+      setQbReview(await api(`/api/courses/${id}/questions/qa-review`));
+    } catch (e: any) {
+      setErr(e.message);
+    } finally {
+      setQbReviewBusy(false);
+    }
+  }
+
+  async function improveQuestionBank() {
+    setErr("");
+    setQbImproveMsg("");
+    setQbImproveBusy(true);
+    try {
+      // Truyền kết quả đánh giá để AI sửa đúng câu có vấn đề (chưa đánh giá thì backend tự chạy).
+      const r = await api(`/api/courses/${id}/questions/improve`, {
+        method: "POST",
+        body: JSON.stringify({ qa: qbReview || null }),
+      });
+      setQbImproveMsg(
+        `Đã nâng cấp ${r.improved} câu hỏi (đặt lại trạng thái nháp để thẩm định lại).`
+      );
+      setQbReview(null);
+      await load();
+    } catch (e: any) {
+      setErr(e.message);
+    } finally {
+      setQbImproveBusy(false);
     }
   }
 
@@ -894,7 +956,14 @@ export default function QuestionsPage() {
           <h2 className="text-lg font-semibold">
             Danh sách câu hỏi ({questions.length})
           </h2>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={reviewQuestionBank}
+              disabled={qbReviewBusy}
+              className="rounded bg-indigo-600 px-3 py-1.5 text-sm text-white disabled:opacity-50"
+            >
+              {qbReviewBusy ? "AI đang đánh giá..." : "✨ Đánh giá chất lượng (AI)"}
+            </button>
             <button
               onClick={() => approveAll(true)}
               disabled={approveBusy}
@@ -911,6 +980,67 @@ export default function QuestionsPage() {
             </button>
           </div>
         </div>
+        {qbImproveMsg && <p className="mb-2 text-sm text-indigo-700">{qbImproveMsg}</p>}
+
+        {/* Kết quả đánh giá chất lượng ngân hàng câu hỏi bằng AI */}
+        {qbReview && (
+          <div className="mb-3 rounded border border-indigo-300 bg-indigo-50 p-3 text-sm">
+            <div className="mb-1 flex items-center justify-between">
+              <b>Kết quả đánh giá ngân hàng câu hỏi (AI)</b>
+              {typeof qbReview.score === "number" && (
+                <span className="rounded bg-indigo-600 px-2 py-1 text-white">
+                  Điểm: {qbReview.score}/100
+                </span>
+              )}
+            </div>
+            {qbReview.summary && <p className="mb-2 italic text-slate-700">{qbReview.summary}</p>}
+            {(qbReview.errors || []).map((e: string) => (
+              <div key={e} className="text-red-700">✗ {e}</div>
+            ))}
+            {(qbReview.warnings || []).map((w: string) => (
+              <div key={w} className="text-amber-700">⚠ {w}</div>
+            ))}
+            {(qbReview.question_reviews || []).length > 0 && (
+              <table className="mt-2 w-full border bg-white text-xs">
+                <thead>
+                  <tr className="bg-slate-100">
+                    <th className="border p-1">Câu</th>
+                    <th className="border p-1">Mức</th>
+                    <th className="border p-1 text-left">Vấn đề</th>
+                    <th className="border p-1 text-left">Gợi ý sửa</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {qbReview.question_reviews.map((r: any) => (
+                    <tr key={r.id}>
+                      <td className="border p-1 text-center">#{r.id}</td>
+                      <td className="border p-1 text-center">
+                        <span className={r.severity === "error" ? "text-red-700" : "text-amber-700"}>
+                          {r.severity === "error" ? "Lỗi" : "Cảnh báo"}
+                        </span>
+                      </td>
+                      <td className="border p-1">{(r.issues || []).join("; ") || "—"}</td>
+                      <td className="border p-1">{r.suggestion || "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+            <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-indigo-200 pt-3">
+              <button
+                onClick={improveQuestionBank}
+                disabled={qbImproveBusy}
+                className="rounded bg-indigo-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+              >
+                {qbImproveBusy ? "AI đang nâng cấp..." : "⚡ Nâng cấp câu hỏi bằng AI"}
+              </button>
+              <span className="text-xs text-slate-500">
+                AI viết lại các câu <b>chưa duyệt</b> có vấn đề (bổ sung đáp án/phương án/rubric, sửa Bloom)
+                và đặt lại trạng thái nháp để thẩm định lại. Câu <b>Đã duyệt</b> không bị thay đổi.
+              </span>
+            </div>
+          </div>
+        )}
         {approveMsg && <p className="mb-2 text-sm text-green-700">{approveMsg}</p>}
         {approveSkipped.length > 0 && (
           <div className="mb-2 rounded border border-amber-300 bg-amber-50 p-2 text-xs text-amber-800">
@@ -1087,12 +1217,15 @@ export default function QuestionsPage() {
                   <div className="flex flex-wrap gap-1">
                     <button onClick={() => loadSummary(m.id)} className="rounded bg-indigo-100 px-2 py-1 text-xs text-indigo-700 hover:bg-indigo-200">Tỷ trọng & cảnh báo</button>
                     <button onClick={() => loadCoverage(m.id)} className="rounded bg-indigo-100 px-2 py-1 text-xs text-indigo-700 hover:bg-indigo-200">Độ phủ ngân hàng</button>
+                    <button onClick={() => reviewMatrix(m.id)} disabled={matrixReviewBusy === m.id} className="rounded bg-indigo-600 px-2 py-1 text-xs text-white disabled:opacity-50">
+                      {matrixReviewBusy === m.id ? "Đang đánh giá..." : "✨ Đánh giá (AI)"}
+                    </button>
                     {st !== "approved" && st !== "archived" && (
                       <button onClick={() => openMatrixEditor(m)} className="rounded bg-amber-100 px-2 py-1 text-xs text-amber-700 hover:bg-amber-200">Sửa</button>
                     )}
                     {st !== "approved" && st !== "archived" && (
                       <button onClick={() => optimizeMatrix(m.id)} disabled={optimizeBusy === m.id} className="rounded bg-green-600 px-2 py-1 text-xs text-white disabled:opacity-50">
-                        {optimizeBusy === m.id ? "Đang tối ưu..." : "✨ Tối ưu AI"}
+                        {optimizeBusy === m.id ? "Đang tối ưu..." : "⚡ Nâng cấp/Tối ưu AI"}
                       </button>
                     )}
                     {next[st] && (
@@ -1104,6 +1237,38 @@ export default function QuestionsPage() {
                     <button onClick={() => deleteMatrix(m.id)} className="rounded bg-red-100 px-2 py-1 text-xs text-red-700 hover:bg-red-200">Xóa</button>
                   </div>
                 </div>
+
+                {/* Kết quả đánh giá AUN-QA của ma trận bằng AI */}
+                {matrixReviews[m.id] && (
+                  <div className="mt-3 rounded border border-indigo-300 bg-indigo-50 p-3 text-xs">
+                    <div className="mb-1 flex items-center justify-between">
+                      <b>Đánh giá AUN-QA (AI)</b>
+                      {typeof matrixReviews[m.id].score === "number" && (
+                        <span className="rounded bg-indigo-600 px-2 py-0.5 text-white">
+                          Điểm: {matrixReviews[m.id].score}/100
+                        </span>
+                      )}
+                    </div>
+                    {matrixReviews[m.id].summary && (
+                      <p className="mb-1 italic text-slate-700">{matrixReviews[m.id].summary}</p>
+                    )}
+                    {(matrixReviews[m.id].errors || []).map((e: string) => (
+                      <div key={e} className="text-red-700">✗ {e}</div>
+                    ))}
+                    {(matrixReviews[m.id].warnings || []).map((w: string) => (
+                      <div key={w} className="text-amber-700">⚠ {w}</div>
+                    ))}
+                    {(matrixReviews[m.id].suggestions || []).map((s: string) => (
+                      <div key={s} className="text-slate-600">• {s}</div>
+                    ))}
+                    {st !== "approved" && st !== "archived" && (
+                      <div className="mt-2 border-t border-indigo-200 pt-2 text-slate-500">
+                        Bấm <b>⚡ Nâng cấp/Tối ưu AI</b> ở trên để AI khắc phục các điểm này (cân điểm,
+                        phủ CLO, cân đối Bloom — bám ngân hàng câu Đã duyệt).
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Trình sửa ma trận inline (kể cả ma trận do AI sinh) */}
                 {editMatrixId === m.id && (

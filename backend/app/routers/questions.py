@@ -29,7 +29,7 @@ from app.schemas.exam import (
 )
 from app.schemas.question_gen import QuestionGenRequest
 from app.services.audit import log_action
-from app.services.question_ai import generate_questions_ai
+from app.services.question_ai import generate_questions_ai, improve_questions_ai
 from app.services.reports import question_bank_stats
 
 router = APIRouter(prefix="/api", tags=["questions"])
@@ -341,6 +341,155 @@ def stats(course_id: int, db: Session = Depends(get_db), _: User = Depends(get_c
     return question_bank_stats(db, course_id)
 
 
+def _question_clo_codes(db: Session, course_id: int) -> dict[int, str]:
+    """Map clo_id -> code cho mọi CLO mà câu hỏi của học phần đang tham chiếu."""
+    qids = [q.clo_id for q in db.query(Question.clo_id).filter(
+        Question.course_id == course_id, Question.is_deleted == False  # noqa: E712
+    ).all() if q.clo_id is not None]
+    if not qids:
+        return {}
+    return {c.id: c.code for c in db.query(Clo).filter(Clo.id.in_(set(qids))).all()}
+
+
+def _question_payload(q: Question, code_by_id: dict[int, str]) -> dict:
+    return {
+        "id": q.id, "clo_code": code_by_id.get(q.clo_id, f"CLO#{q.clo_id}"),
+        "bloom_level": q.bloom_level or "", "difficulty": q.difficulty or "",
+        "type": q.type or "", "content": q.content or "",
+        "options": list(q.options_json or []), "answer": q.answer or "",
+        "explanation": q.explanation or "",
+        "has_rubric": bool((q.rubric_json or {}).get("criteria")),
+    }
+
+
+@router.get("/courses/{course_id}/questions/qa-review")
+def questions_qa_review(course_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+    """AI đánh giá chất lượng ngân hàng câu hỏi: gắn CLO/Bloom, đáp án, rubric, độ phủ (SPEC 4.5)."""
+    from app.services.qa_review import review_questions_ai
+
+    course = db.get(Course, course_id)
+    if not course:
+        raise HTTPException(404, "Không tìm thấy học phần")
+    qs = db.query(Question).filter(
+        Question.course_id == course_id, Question.is_deleted == False  # noqa: E712
+    ).all()
+    if not qs:
+        raise HTTPException(400, "Ngân hàng câu hỏi đang trống — chưa có câu để đánh giá.")
+    code_by_id = _question_clo_codes(db, course_id)
+    try:
+        return review_questions_ai(
+            {"code": course.code, "name": course.name},
+            [_question_payload(q, code_by_id) for q in qs],
+        )
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(400, f"Đánh giá ngân hàng câu hỏi thất bại: {e}")
+
+
+class QuestionsImproveIn(BaseModel):
+    """Tham số nâng cấp câu hỏi bằng AI.
+
+    qa: kết quả đánh giá đã chạy (nếu trống, backend tự chạy đánh giá trước).
+    ids: giới hạn câu cần nâng cấp; nếu trống, nâng cấp các câu bị gắn lỗi/cảnh báo (chưa duyệt).
+    """
+    qa: dict | None = None
+    ids: list[int] = []
+
+
+# Tối đa số câu nâng cấp trong một lần (an toàn độ dài prompt).
+_MAX_IMPROVE = 40
+
+
+@router.post("/courses/{course_id}/questions/improve")
+def improve_questions(
+    course_id: int,
+    payload: QuestionsImproveIn | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(LECTURER),
+):
+    """Nâng cấp câu hỏi bằng AI dựa trên kết quả đánh giá chất lượng (SPEC 4.5).
+
+    Viết lại các câu CHƯA DUYỆT có vấn đề (sửa Bloom sai, bổ sung đáp án/phương án/rubric/giải thích),
+    cập nhật tại chỗ và đặt lại trạng thái 'draft' để thẩm định lại. Câu Đã duyệt KHÔNG bị thay đổi.
+    """
+    from app.services.qa_review import review_questions_ai
+
+    course = db.get(Course, course_id)
+    if not course:
+        raise HTTPException(404, "Không tìm thấy học phần")
+    payload = payload or QuestionsImproveIn()
+    # Chỉ nâng cấp câu chưa duyệt (không đụng câu Đã duyệt/đang dùng).
+    candidates = db.query(Question).filter(
+        Question.course_id == course_id, Question.is_deleted == False,  # noqa: E712
+        Question.review_status != "approved",
+    ).all()
+    if not candidates:
+        raise HTTPException(400, "Không có câu chưa duyệt nào để nâng cấp (câu Đã duyệt không bị thay đổi).")
+    by_id = {q.id: q for q in candidates}
+    code_by_id = _question_clo_codes(db, course_id)
+
+    qa = payload.qa
+    if not qa and not payload.ids:
+        # Tự đánh giá để biết câu nào có vấn đề.
+        try:
+            qa = review_questions_ai(
+                {"code": course.code, "name": course.name},
+                [_question_payload(q, code_by_id) for q in candidates],
+            )
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(400, f"Đánh giá trước khi nâng cấp thất bại: {e}")
+
+    # Xác định danh sách câu cần nâng cấp.
+    if payload.ids:
+        target_ids = [i for i in payload.ids if i in by_id]
+    else:
+        target_ids = [int(r["id"]) for r in (qa or {}).get("question_reviews", [])
+                      if r.get("id") is not None and int(r["id"]) in by_id]
+    target_ids = target_ids[:_MAX_IMPROVE]
+    if not target_ids:
+        raise HTTPException(400, "Không có câu chưa duyệt nào bị gắn vấn đề để nâng cấp.")
+
+    targets = [by_id[i] for i in target_ids]
+    try:
+        improved = improve_questions_ai(
+            {"code": course.code, "name": course.name},
+            [_question_payload(q, code_by_id) for q in targets],
+            qa,
+        )
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(400, f"Nâng cấp câu hỏi thất bại: {e}")
+
+    updated: list[int] = []
+    for iq in improved.questions:
+        q = by_id.get(iq.id)
+        if not q:
+            continue
+        if iq.content:
+            q.content = iq.content
+        q.options_json = iq.options or []
+        if iq.answer:
+            q.answer = iq.answer
+        if iq.explanation:
+            q.explanation = iq.explanation
+        if iq.bloom_level:
+            q.bloom_level = iq.bloom_level
+        if iq.difficulty:
+            q.difficulty = iq.difficulty
+        if iq.type:
+            q.type = iq.type
+        if iq.rubric:
+            q.rubric_json = {"criteria": [c.model_dump() for c in iq.rubric]}
+        q.review_status = "draft"  # nội dung đổi → cần thẩm định lại
+        tags = list(q.tags_json or [])
+        if "ai-improved" not in tags:
+            tags.append("ai-improved")
+        q.tags_json = tags
+        updated.append(q.id)
+    db.commit()
+    log_action(db, user.id, "question", None, "improve_ai",
+               {"course_id": course_id, "count": len(updated), "ids": updated})
+    return {"improved": len(updated), "ids": updated}
+
+
 @router.get("/matrices/{mid}/coverage")
 def matrix_bank_coverage(mid: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
     """Độ phủ ngân hàng theo từng ô ma trận: số câu Approved sẵn có vs cần lấy (SPEC mục 12).
@@ -534,6 +683,62 @@ def matrix_summary_endpoint(mid: int, db: Session = Depends(get_db), _: User = D
     return res
 
 
+def _matrix_review_payload(db: Session, m: ExamMatrix) -> dict:
+    """Gom dữ liệu ma trận (ô + ngân hàng Đã duyệt + cấu phần đánh giá) để AI đánh giá/tối ưu."""
+    course = db.get(Course, m.course_id)
+    clo_ids = {c.get("clo_id") for c in m.cells_json if c.get("clo_id")}
+    code_by_id = {c.id: c.code for c in db.query(Clo).filter(Clo.id.in_(clo_ids or [-1])).all()}
+    # Ngân hàng câu Đã duyệt theo tổ hợp.
+    avail: dict[tuple, int] = {}
+    for q in db.query(Question).filter(
+        Question.course_id == m.course_id, Question.is_deleted == False,  # noqa: E712
+        Question.review_status == "approved",
+    ).all():
+        if q.clo_id in code_by_id:
+            key = (code_by_id[q.clo_id], q.bloom_level, q.difficulty)
+            avail[key] = avail.get(key, 0) + 1
+    bank_cells = [
+        {"clo_code": k[0], "bloom_level": k[1], "difficulty": k[2], "available": v}
+        for k, v in avail.items()
+    ]
+    cells = [
+        {"clo_code": code_by_id.get(c.get("clo_id"), f"CLO#{c.get('clo_id')}"),
+         "bloom_level": c.get("bloom_level"), "difficulty": c.get("difficulty"),
+         "count": c.get("count"), "points_each": c.get("points_each")}
+        for c in m.cells_json
+    ]
+    assessment = None
+    if m.assessment_id:
+        from app.models import Assessment
+
+        a = db.get(Assessment, m.assessment_id)
+        if a:
+            target = _assessment_clo_ids(db, m.assessment_id)
+            target_codes = [c.code for c in db.query(Clo).filter(Clo.id.in_(target or [-1])).all()]
+            assessment = {"name": a.name, "clo_codes": target_codes}
+    return {
+        "course": {"code": course.code if course else "", "name": course.name if course else ""},
+        "name": m.name, "total_points": m.total_points,
+        "cells": cells, "bank_cells": bank_cells, "assessment": assessment,
+    }
+
+
+@router.get("/matrices/{mid}/qa-review")
+def matrix_qa_review(mid: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+    """AI đánh giá ma trận đề thi theo AUN-QA: tổng điểm, độ phủ CLO, cân đối Bloom, khả thi."""
+    from app.services.qa_review import review_matrix_ai
+
+    m = db.get(ExamMatrix, mid)
+    if not m:
+        raise HTTPException(404, "Không tìm thấy ma trận")
+    if not m.cells_json:
+        raise HTTPException(400, "Ma trận chưa có ô nào để đánh giá.")
+    try:
+        return review_matrix_ai(_matrix_review_payload(db, m))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(400, f"Đánh giá ma trận thất bại: {e}")
+
+
 @router.put("/matrices/{mid}", response_model=ExamMatrixOut)
 def update_matrix(mid: int, payload: ExamMatrixCreate, db: Session = Depends(get_db), user: User = Depends(LECTURER)):
     m = db.get(ExamMatrix, mid)
@@ -552,9 +757,22 @@ def update_matrix(mid: int, payload: ExamMatrixCreate, db: Session = Depends(get
     return _matrix_out(m)
 
 
+class MatrixOptimizeIn(BaseModel):
+    """qa: kết quả đánh giá AUN-QA (nếu có) để AI bám vào mà khắc phục khi tối ưu."""
+    qa: dict | None = None
+
+
 @router.post("/matrices/{mid}/optimize")
-def optimize_matrix(mid: int, db: Session = Depends(get_db), user: User = Depends(LECTURER)):
-    """AI tối ưu ma trận (cân tổng điểm, cân đối Bloom, bám ngân hàng Đã duyệt) + giải thích AUN-QA."""
+def optimize_matrix(
+    mid: int,
+    payload: MatrixOptimizeIn | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(LECTURER),
+):
+    """AI tối ưu/nâng cấp ma trận (cân tổng điểm, cân đối Bloom, bám ngân hàng Đã duyệt) + giải thích AUN-QA.
+
+    Nếu truyền kèm kết quả đánh giá (qa), AI sẽ bám vào các lỗi/cảnh báo/đề xuất đó để khắc phục.
+    """
     from app.services.matrix_ai import optimize_exam_matrix_ai
 
     m = db.get(ExamMatrix, mid)
@@ -601,6 +819,7 @@ def optimize_matrix(mid: int, db: Session = Depends(get_db), user: User = Depend
             bank_cells=bank_cells,
             current_cells=current,
             total_points=m.total_points,
+            qa=payload.qa if payload else None,
         )
     except Exception as e:  # noqa: BLE001
         raise HTTPException(400, f"Tối ưu ma trận thất bại: {e}")

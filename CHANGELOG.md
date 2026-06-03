@@ -9,6 +9,17 @@
   trọng số = 100%, ánh xạ PLO/PI. Kết quả ghi thành **phiên bản mới (draft)**, giữ nguyên bản
   gốc để đối chiếu (diff). Endpoint `POST /api/outlines/{id}/improve`; nút "⚡ Nâng cấp đề cương
   bằng AI" hiện ngay trong khung kết quả kiểm tra chất lượng.
+- **Đánh giá + nâng cấp Ngân hàng câu hỏi bằng AI** (4.5): AI chấm điểm chất lượng ngân hàng
+  (gắn CLO/Bloom đúng, đáp án, phương án nhiễu, rubric, độ phủ, cân đối Bloom), chỉ ra lỗi/cảnh
+  báo từng câu; nút "⚡ Nâng cấp câu hỏi bằng AI" viết lại các câu **chưa duyệt** có vấn đề (bổ
+  sung đáp án/phương án/rubric, sửa Bloom sai) và đặt lại trạng thái nháp để thẩm định lại — câu
+  **Đã duyệt không bị thay đổi**. Endpoint `GET /api/courses/{id}/questions/qa-review`,
+  `POST /api/courses/{id}/questions/improve`.
+- **Đánh giá + nâng cấp Ma trận đề thi bằng AI** (mục 11/12): AI đánh giá blueprint theo AUN-QA
+  (tổng điểm đúng thang, độ phủ CLO, cân đối Bloom, khả thi với ngân hàng Đã duyệt, alignment với
+  cấu phần đánh giá) trả điểm + cảnh báo + đề xuất; nút "⚡ Nâng cấp/Tối ưu AI" nay **bám kết quả
+  đánh giá** để khắc phục đúng điểm yếu. Endpoint `GET /api/matrices/{id}/qa-review`; `optimize`
+  nhận thêm tham số `qa`.
 
 ## v1.0.0 — 2026-06-02
 

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import json
 
-from app.schemas.question_gen import GeneratedQuestions
+from app.schemas.question_gen import GeneratedQuestions, ImprovedQuestions
 from app.services.llm import llm_complete
 
 QUESTION_SYSTEM_PROMPT = """Bạn là chuyên gia khảo thí theo chuẩn OBE. Nhiệm vụ: soạn CÂU HỎI \
@@ -103,3 +103,68 @@ def generate_questions_ai(
     raw = llm_complete(QUESTION_SYSTEM_PROMPT, user_content, max_tokens=12000)
     data = json.loads(_strip_to_json(raw))
     return GeneratedQuestions.model_validate(data)
+
+
+IMPROVE_SYSTEM_PROMPT = """Bạn là chuyên gia khảo thí theo chuẩn OBE/AUN-QA. Bạn được giao một số \
+CÂU HỎI kèm KẾT QUẢ RÀ SOÁT CHẤT LƯỢNG chỉ ra vấn đề của từng câu.
+
+Nhiệm vụ: VIẾT LẠI (nâng cấp) từng câu để khắc phục các vấn đề đã nêu, GIỮ NGUYÊN id và CLO của câu.
+Yêu cầu bắt buộc cho mỗi câu sau nâng cấp:
+- Mức Bloom ('bloom_level') phải khớp thực chất yêu cầu nhận thức của câu; chỉnh nếu bị gán sai.
+- Trắc nghiệm (mcq_single/mcq_multi): đủ 4 phương án trong 'options', 'answer' ghi rõ phương án đúng \
+(vd "A" hoặc "A,C"); các phương án nhiễu hợp lý, KHÔNG lộ đáp án, KHÔNG trùng.
+- Tự luận/bài tập/điền khuyết: 'options' rỗng, 'answer' là đáp án/thang điểm; \
+với essay/exercise BẮT BUỘC kèm 'rubric' 2–4 tiêu chí (mỗi tiêu chí có trọng số % và 3–4 mức chất lượng).
+- 'explanation' giải thích đáp án rõ ràng, đầy đủ.
+- Nội dung chính xác học thuật, rõ ràng, không mơ hồ.
+
+Chỉ trả về DUY NHẤT JSON (không markdown, không văn bản thừa) theo schema:
+{
+  "questions": [
+    {"id": 12, "content":"", "options":["A. ...","B. ...","C. ...","D. ..."], "answer":"",
+     "explanation":"", "bloom_level":"remember|understand|apply|analyze|evaluate|create",
+     "difficulty":"easy|medium|hard", "type":"mcq_single|mcq_multi|fill_blank|short_answer|essay|exercise",
+     "rubric":[{"name":"tiêu chí","weight_percent":50,"levels":["Giỏi: ...","Khá: ...","Đạt: ...","Chưa đạt: ..."]}]}
+  ]
+}
+Trả về ĐÚNG các id được yêu cầu nâng cấp."""
+
+
+def improve_questions_ai(course: dict, questions: list[dict], qa: dict | None = None) -> ImprovedQuestions:
+    """Nâng cấp các câu hỏi dựa trên kết quả rà soát chất lượng.
+
+    questions: [{id,clo_code,bloom_level,difficulty,type,content,options,answer,explanation,has_rubric}].
+    qa: kết quả review_questions_ai (dùng để biết vấn đề từng câu, key theo id).
+    Trả về ImprovedQuestions (mỗi câu giữ id gốc) — caller cập nhật tại chỗ.
+    """
+    if not questions:
+        raise ValueError("Không có câu hỏi nào để nâng cấp.")
+    issues_by_id: dict[int, str] = {}
+    for r in (qa or {}).get("question_reviews", []) or []:
+        rid = r.get("id")
+        if rid is None:
+            continue
+        parts = "; ".join(r.get("issues", []) or [])
+        sug = r.get("suggestion", "") or ""
+        issues_by_id[int(rid)] = (parts + (f" | gợi ý: {sug}" if sug else "")).strip()
+
+    blocks = []
+    for q in questions:
+        opts = q.get("options") or []
+        opt_txt = ("\n  PA: " + " / ".join(str(o) for o in opts)) if opts else ""
+        problem = issues_by_id.get(int(q["id"]), "")
+        blocks.append(
+            f"[id={q['id']}] CLO {q.get('clo_code','?')} | {q.get('type','')} | "
+            f"Bloom={q.get('bloom_level','')} | độ khó={q.get('difficulty','')}\n"
+            f"  Nội dung: {q.get('content','')}{opt_txt}\n"
+            f"  Đáp án: {q.get('answer','') or '(trống)'} | Giải thích: {q.get('explanation','') or '(trống)'}"
+            + (f"\n  VẤN ĐỀ CẦN SỬA: {problem}" if problem else "\n  VẤN ĐỀ CẦN SỬA: rà soát và cải thiện tổng thể.")
+        )
+    user = (
+        f"HỌC PHẦN: {course.get('code','')} — {course.get('name','')}.\n"
+        + (f"Nhận xét chung: {qa.get('summary','')}\n\n" if qa and qa.get("summary") else "\n")
+        + "CÁC CÂU HỎI CẦN NÂNG CẤP:\n" + "\n\n".join(blocks)
+    )
+    raw = llm_complete(IMPROVE_SYSTEM_PROMPT, user, max_tokens=12000)
+    data = json.loads(_strip_to_json(raw))
+    return ImprovedQuestions.model_validate(data)

@@ -31,6 +31,23 @@ class GeneratedQuestions(BaseModel):
     questions: list[GenQuestion] = Field(default_factory=list)
 
 
+class ImprovedQuestion(BaseModel):
+    """Một câu hỏi đã được AI nâng cấp (gắn id câu hỏi gốc để cập nhật tại chỗ)."""
+    id: int
+    content: str = ""
+    options: list[str] = Field(default_factory=list)
+    answer: str = ""
+    explanation: str = ""
+    bloom_level: str = ""
+    difficulty: str = ""
+    type: str = ""
+    rubric: list[GenRubricCriterion] = Field(default_factory=list)
+
+
+class ImprovedQuestions(BaseModel):
+    questions: list[ImprovedQuestion] = Field(default_factory=list)
+
+
 class QuestionGenRequest(BaseModel):
     """Yêu cầu sinh câu hỏi: số lượng theo từng CLO×Bloom×độ khó hoặc tự do."""
     clo_ids: list[int] = Field(default_factory=list)   # giới hạn theo CLO; rỗng = mọi CLO
