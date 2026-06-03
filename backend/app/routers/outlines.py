@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.deps import get_current_user, require_roles
@@ -37,7 +38,7 @@ from app.services.alignment import check_outline_alignment
 from app.services.audit import log_action
 from app.services.diff import diff_outlines
 from app.services.exports import outline_to_docx
-from app.services.outline_ai import generate_outline_ai
+from app.services.outline_ai import generate_outline_ai, improve_outline_ai
 
 router = APIRouter(prefix="/api", tags=["outline"])
 
@@ -154,7 +155,13 @@ def generate_outline(
     except Exception as e:  # noqa: BLE001
         raise HTTPException(400, f"Sinh đề cương thất bại: {e}")
 
-    # Ghi ra đề cương DRAFT (phiên bản mới nhất + 1).
+    outline = _write_generated_outline(db, course_id, gen, plo_by_code, user, {"generated_by_ai": True})
+    log_action(db, user.id, "outline", outline.id, "generate_ai", {"course_id": course_id})
+    return outline
+
+
+def _write_generated_outline(db, course_id, gen, plo_by_code, user, info_json):
+    """Ghi một GeneratedOutline (AI sinh/nâng cấp) thành đề cương DRAFT phiên bản mới."""
     latest = (
         db.query(CourseOutline)
         .filter(CourseOutline.course_id == course_id)
@@ -166,7 +173,7 @@ def generate_outline(
         version=(latest.version + 1) if latest else 1,
         status="draft",
         description=gen.description,
-        general_info_json={"generated_by_ai": True},
+        general_info_json=info_json,
         teaching_methods_json=gen.teaching_methods,
         references_json=gen.references,
         created_by=user.id,
@@ -210,7 +217,6 @@ def generate_outline(
 
     db.commit()
     db.refresh(outline)
-    log_action(db, user.id, "outline", outline.id, "generate_ai", {"course_id": course_id})
     return outline
 
 
@@ -558,3 +564,120 @@ def qa_review_outline(outline_id: int, db: Session = Depends(get_db), _: User = 
         })
     except Exception as e:  # noqa: BLE001
         raise HTTPException(400, f"Kiểm tra chất lượng thất bại: {e}")
+
+
+class ImproveOutlineIn(BaseModel):
+    """Tham số nâng cấp đề cương bằng AI.
+
+    qa: kết quả kiểm tra chất lượng đã chạy ở frontend (score/summary/errors/warnings/clo_reviews).
+    Nếu để trống, backend tự chạy lại kiểm tra chất lượng trước khi nâng cấp.
+    """
+    qa: dict | None = None
+
+
+@router.post("/outlines/{outline_id}/improve", response_model=OutlineOut, status_code=201)
+def improve_outline(
+    outline_id: int,
+    payload: ImproveOutlineIn | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(LECTURER),
+):
+    """Nâng cấp đề cương bằng AI dựa trên kết quả kiểm tra chất lượng (SPEC mục 14).
+
+    Đọc đề cương hiện tại + kết quả kiểm tra chất lượng (AI), sinh ra một PHIÊN BẢN MỚI (draft)
+    đã khắc phục các lỗi/cảnh báo — giữ nguyên phiên bản gốc để đối chiếu (diff).
+    """
+    from app.models import CoursePlo
+    from app.services.qa_review import review_outline_ai
+
+    outline = db.get(CourseOutline, outline_id)
+    if not outline:
+        raise HTTPException(404, "Không tìm thấy đề cương")
+    course = db.get(Course, outline.course_id)
+    if not course:
+        raise HTTPException(404, "Không tìm thấy học phần")
+    program = db.get(Program, course.program_id)
+    plos = db.query(Plo).filter(Plo.program_id == course.program_id).all()
+    plo_by_code = {p.code: p for p in plos}
+    plo_code_by_id = {p.id: p.code for p in plos}
+    pis = db.query(Pi).filter(Pi.plo_id.in_([p.id for p in plos] or [-1])).all() if plos else []
+    course_plo = [
+        {"plo_code": plo_code_by_id[cp.plo_id], "level": cp.level}
+        for cp in db.query(CoursePlo).filter(CoursePlo.course_id == course.id).all()
+        if cp.plo_id in plo_code_by_id
+    ]
+
+    # Dữ liệu đề cương hiện tại
+    clos = db.query(Clo).filter(Clo.outline_id == outline_id).all()
+    clo_by_id = {c.id: c for c in clos}
+    clo_plos: dict[int, list[dict]] = {c.id: [] for c in clos}
+    for cp in db.query(CloPlo).filter(CloPlo.clo_id.in_([c.id for c in clos] or [-1])).all():
+        if cp.clo_id in clo_plos and cp.plo_id in plo_code_by_id:
+            clo_plos[cp.clo_id].append({"plo_code": plo_code_by_id[cp.plo_id], "level": cp.contribution_level})
+    cur_clos = [
+        {"code": c.code, "description": c.description, "description_en": c.description_en or "",
+         "bloom_level": c.bloom_level or "", "plos": clo_plos.get(c.id, [])}
+        for c in clos
+    ]
+    cur_assessments = []
+    qa_assessments = []
+    for a in db.query(Assessment).filter(Assessment.outline_id == outline_id).all():
+        codes = [clo_by_id[ac.clo_id].code
+                 for ac in db.query(AssessmentClo).filter(AssessmentClo.assessment_id == a.id).all()
+                 if ac.clo_id in clo_by_id]
+        cur_assessments.append({"name": a.name, "type": a.type or "",
+                                "weight_percent": a.weight_percent, "clo_codes": codes})
+        qa_assessments.append({"name": a.name, "weight": a.weight_percent, "clos": codes})
+    cur_lessons = []
+    qa_lessons = []
+    for lp in db.query(LessonPlan).filter(LessonPlan.outline_id == outline_id).all():
+        codes = [clo_by_id[lc.clo_id].code
+                 for lc in db.query(LessonPlanClo).filter(LessonPlanClo.lesson_plan_id == lp.id).all()
+                 if lc.clo_id in clo_by_id]
+        cur_lessons.append({"week": lp.week, "topic": lp.topic, "clo_codes": codes})
+        qa_lessons.append({"topic": lp.topic, "clos": codes})
+    if not cur_clos:
+        raise HTTPException(400, "Đề cương chưa có CLO để nâng cấp")
+
+    # Kết quả kiểm tra chất lượng: dùng kết quả truyền vào, nếu không có thì tự chạy.
+    qa = payload.qa if payload and payload.qa else None
+    if not qa:
+        try:
+            qa = review_outline_ai({
+                "course": {"code": course.code, "name": course.name},
+                "clos": [{"code": c["code"], "description": c["description"],
+                          "bloom_level": c["bloom_level"],
+                          "plos": [m["plo_code"] for m in c["plos"]]} for c in cur_clos],
+                "assessments": qa_assessments, "lessons": qa_lessons,
+            })
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(400, f"Kiểm tra chất lượng trước khi nâng cấp thất bại: {e}")
+
+    try:
+        gen = improve_outline_ai(
+            course={
+                "code": course.code, "name": course.name, "credits": course.credits,
+                "semester": course.semester, "type": course.type,
+                "program_name": program.name if program else "",
+            },
+            plos=[{"code": p.code, "category": p.category or "", "description": p.description} for p in plos],
+            pis=[{"code": pi.code, "plo_code": plo_code_by_id.get(pi.plo_id, ""), "description": pi.description} for pi in pis],
+            course_plo=course_plo,
+            current={
+                "description": outline.description or "",
+                "teaching_methods": outline.teaching_methods_json or [],
+                "references": outline.references_json or [],
+                "clos": cur_clos, "assessments": cur_assessments, "lessons": cur_lessons,
+            },
+            qa=qa,
+        )
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(400, f"Nâng cấp đề cương thất bại: {e}")
+
+    new = _write_generated_outline(
+        db, course.id, gen, plo_by_code, user,
+        {"generated_by_ai": True, "improved_from": outline_id, "qa_score": qa.get("score")},
+    )
+    log_action(db, user.id, "outline", new.id, "improve_ai",
+               {"from": outline_id, "qa_score": qa.get("score")})
+    return new

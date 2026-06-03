@@ -88,6 +88,121 @@ def _strip_to_json(text: str) -> str:
     return t[start : end + 1] if start != -1 and end != -1 else t
 
 
+IMPROVE_SYSTEM_PROMPT = """Bạn là chuyên gia thiết kế chương trình đào tạo theo chuẩn OBE \
+(Outcome-Based Education) và kiểm định AUN-QA. Bạn được giao một ĐỀ CƯƠNG HỌC PHẦN hiện có \
+KÈM KẾT QUẢ KIỂM TRA CHẤT LƯỢNG (AI) chỉ ra các lỗi/cảnh báo cần khắc phục.
+
+Nhiệm vụ: NÂNG CẤP đề cương để khắc phục TỪNG điểm đã nêu trong kết quả kiểm tra, đồng thời \
+GIỮ LẠI những phần đã tốt. Nguyên tắc:
+- Xử lý DỨT ĐIỂM mọi 'errors' và cố gắng xử lý các 'warnings'; mỗi gợi ý sửa (suggestion) của \
+từng CLO phải được phản ánh trong bản nâng cấp.
+- Thống nhất phân loại thang đo: CLO thái độ (affective) dùng động từ/diễn đạt và hình thức đánh giá \
+phù hợp (rubric quan sát, dự án, đánh giá quá trình) — KHÔNG ép vào thang Bloom nhận thức.
+- Mỗi CLO chỉ tập trung MỘT động từ/mức chủ đạo, đo lường được, bắt đầu bằng động từ.
+- MỖI CLO ánh xạ ít nhất một PLO (đúng mã PLO được cung cấp) với mức I/R/M hợp lý; cân nhắc ánh xạ \
+chi tiết tới PI nếu kết quả kiểm tra yêu cầu phân hóa.
+- MỖI CLO được phủ bởi ít nhất một cấu phần đánh giá VÀ xuất hiện trong kế hoạch giảng dạy; \
+mọi hoạt động học (vd thuyết trình/dự án nhóm) tính điểm phải có cấu phần đánh giá với trọng số rõ ràng.
+- Bổ sung cấu phần đánh giá quá trình khi CLO mức cao (Analyze trở lên) chỉ được đánh giá ở cuối kỳ.
+- Tổng trọng số các cấu phần đánh giá BẰNG ĐÚNG 100.
+- MỖI cấu phần đánh giá kèm RUBRIC: 2–4 tiêu chí (tổng trọng số tiêu chí = 100) và 3–4 mức chất lượng cụ thể.
+- GIỮ NGUYÊN mã CLO sẵn có khi nội dung không đổi nhiều; chỉ thêm CLO mới khi thật cần.
+- Viết SONG NGỮ: 'description' tiếng Việt (động từ Bloom/thái độ tiếng Anh trong ngoặc), \
+'description_en' là bản dịch tiếng Anh đầy đủ.
+
+Chỉ trả về DUY NHẤT một JSON hợp lệ (không markdown, không văn bản thừa) theo schema:
+{{
+  "description": "mô tả học phần",
+  "teaching_methods": ["..."],
+  "references": ["..."],
+  "clos": [{{"code":"CLO1","description":"mô tả tiếng Việt","description_en":"English","bloom_level":"remember|understand|apply|analyze|evaluate|create","plos":[{{"plo_code":"PLO1","level":"I|R|M"}}]}}],
+  "assessments": [{{"name":"","type":"","weight_percent":0,"clo_codes":["CLO1"],"rubric":[{{"name":"tiêu chí","weight_percent":0,"levels":["Giỏi: ...","Khá: ...","Đạt: ...","Chưa đạt: ..."]}}]}}],
+  "lessons": [{{"week":1,"topic":"","clo_codes":["CLO1"]}}]
+}}
+Chỉ dùng các mã PLO có trong dữ liệu được cung cấp. KHÔNG bịa PLO không tồn tại."""
+
+
+def _format_qa(qa: dict) -> str:
+    """Định dạng kết quả kiểm tra chất lượng (AI) thành văn bản đưa vào prompt nâng cấp."""
+    if not qa:
+        return "(không có kết quả kiểm tra — hãy tự rà soát theo tiêu chí AUN-QA)"
+    parts: list[str] = []
+    if qa.get("summary"):
+        parts.append(f"Nhận xét tổng quan: {qa['summary']}")
+    if qa.get("score") is not None:
+        parts.append(f"Điểm hiện tại: {qa['score']}/100")
+    if qa.get("errors"):
+        parts.append("LỖI cần sửa:\n" + "\n".join(f"- {e}" for e in qa["errors"]))
+    if qa.get("warnings"):
+        parts.append("CẢNH BÁO nên xử lý:\n" + "\n".join(f"- {w}" for w in qa["warnings"]))
+    cr = qa.get("clo_reviews") or []
+    if cr:
+        lines = []
+        for r in cr:
+            issues = "; ".join(r.get("issues", []) or []) or "—"
+            sug = r.get("suggestion", "") or ""
+            lines.append(f"- {r.get('code','?')}: vấn đề: {issues}" + (f" | gợi ý: {sug}" if sug else ""))
+        parts.append("Rà soát từng CLO:\n" + "\n".join(lines))
+    return "\n\n".join(parts)
+
+
+def improve_outline_ai(
+    course: dict,
+    plos: list[dict],
+    pis: list[dict],
+    course_plo: list[dict],
+    current: dict,
+    qa: dict,
+) -> GeneratedOutline:
+    """Nâng cấp đề cương hiện có dựa trên kết quả kiểm tra chất lượng (AI).
+
+    current: {description, teaching_methods, references, clos:[{code,description,
+        description_en,bloom_level,plos:[{plo_code,level}]}], assessments:[...], lessons:[...]}.
+    qa: kết quả từ review_outline_ai (score/summary/errors/warnings/clo_reviews).
+    Trả về GeneratedOutline đã validate — caller ghi ra một phiên bản đề cương mới (draft).
+    """
+    plo_lines = "\n".join(f"- {p['code']} [{p.get('category','')}]: {p['description']}" for p in plos)
+    pi_lines = "\n".join(f"- {pi['code']} (thuộc {pi['plo_code']}): {pi['description']}" for pi in pis)
+    cp_lines = "\n".join(f"- {cp['plo_code']}: mức {cp['level']}" for cp in course_plo) or "(chưa có)"
+
+    def _clo_plo_str(c: dict) -> str:
+        mapped = ", ".join(f"{m['plo_code']}({m.get('level', 'R')})" for m in c.get("plos", []))
+        return mapped or "CHƯA ÁNH XẠ"
+
+    cur_clo = "\n".join(
+        f"- {c['code']} ({c.get('bloom_level','')}): {c['description']} [PLO: {_clo_plo_str(c)}]"
+        for c in current.get("clos", [])
+    ) or "(chưa có)"
+    cur_assess = "\n".join(
+        f"- {a['name']} ({a.get('type','')}, {a.get('weight_percent',0)}%) → CLO: "
+        f"{', '.join(a.get('clo_codes', [])) or 'KHÔNG'}"
+        for a in current.get("assessments", [])
+    ) or "(chưa có)"
+    cur_lesson = "\n".join(
+        f"- Tuần {l.get('week','?')}: {l.get('topic','')} → CLO: {', '.join(l.get('clo_codes', [])) or 'KHÔNG'}"
+        for l in current.get("lessons", [])
+    ) or "(chưa có)"
+
+    user_content = "\n".join(p for p in [
+        f"HỌC PHẦN: {course.get('code','')} — {course.get('name','')} "
+        f"({course.get('credits','?')} tín chỉ, loại {course.get('type','')}).",
+        f"CHƯƠNG TRÌNH ĐÀO TẠO: {course.get('program_name','')}.",
+        f"\nDANH SÁCH PLO CỦA CHƯƠNG TRÌNH:\n{plo_lines}",
+        f"\nCHỈ BÁO PI:\n{pi_lines}" if pi_lines else "",
+        f"\nMỨC ĐÓNG GÓP HỌC PHẦN×PLO:\n{cp_lines}",
+        f"\n===== ĐỀ CƯƠNG HIỆN TẠI =====\nMô tả: {current.get('description','')}",
+        f"\nCLO HIỆN TẠI:\n{cur_clo}",
+        f"\nĐÁNH GIÁ HIỆN TẠI:\n{cur_assess}",
+        f"\nKẾ HOẠCH DẠY HIỆN TẠI:\n{cur_lesson}",
+        f"\n===== KẾT QUẢ KIỂM TRA CHẤT LƯỢNG (AI) CẦN KHẮC PHỤC =====\n{_format_qa(qa)}",
+        "\nHãy trả về đề cương ĐÃ NÂNG CẤP (toàn bộ, không chỉ phần sửa) khắc phục các điểm trên.",
+    ] if p)
+
+    raw = llm_complete(IMPROVE_SYSTEM_PROMPT, user_content, max_tokens=12000)
+    data = json.loads(_strip_to_json(raw))
+    return GeneratedOutline.model_validate(data)
+
+
 def generate_outline_ai(
     course: dict,
     plos: list[dict],

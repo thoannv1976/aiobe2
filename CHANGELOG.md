@@ -1,5 +1,15 @@
 # Nhật ký phiên bản — AIOBE / OBE-AUN-QA
 
+## v1.1.0 — 2026-06-03
+
+### Thêm mới
+- **Nâng cấp đề cương bằng AI** sau khi kiểm tra chất lượng (4.3 / mục 14): từ kết quả kiểm tra
+  chất lượng (điểm, lỗi, cảnh báo, gợi ý từng CLO), AI soạn lại toàn bộ đề cương khắc phục từng
+  điểm — thống nhất thang đo CLO nhận thức/thái độ, bổ sung cấu phần đánh giá quá trình, cân
+  trọng số = 100%, ánh xạ PLO/PI. Kết quả ghi thành **phiên bản mới (draft)**, giữ nguyên bản
+  gốc để đối chiếu (diff). Endpoint `POST /api/outlines/{id}/improve`; nút "⚡ Nâng cấp đề cương
+  bằng AI" hiện ngay trong khung kết quả kiểm tra chất lượng.
+
 ## v1.0.0 — 2026-06-02
 
 Phiên bản đầu tiên hoàn chỉnh: nền tảng quản lý đào tạo theo chuẩn OBE & kiểm định AUN-QA,

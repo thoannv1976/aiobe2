@@ -30,6 +30,7 @@ export default function OutlineEditor() {
   const [alignment, setAlignment] = useState<any>(null);
   const [qaResult, setQaResult] = useState<any>(null);
   const [qaBusy, setQaBusy] = useState(false);
+  const [improveBusy, setImproveBusy] = useState(false);
   const [clos, setClos] = useState<any[]>([]);
   const [cloPlo, setCloPlo] = useState<any[]>([]);
   const [plos, setPlos] = useState<any[]>([]);
@@ -161,6 +162,24 @@ export default function OutlineEditor() {
       setErr(e.message);
     } finally {
       setQaBusy(false);
+    }
+  }
+
+  async function improveOutline() {
+    setErr("");
+    setImproveBusy(true);
+    try {
+      // Truyền kết quả kiểm tra chất lượng đã có để AI bám vào mà sửa
+      // (nếu chưa kiểm tra, backend sẽ tự chạy kiểm tra trước khi nâng cấp).
+      const created = await api(`/api/outlines/${id}/improve`, {
+        method: "POST",
+        body: JSON.stringify({ qa: qaResult || null }),
+      });
+      if (created?.id) router.push(`/outlines/${created.id}`);
+    } catch (e: any) {
+      setErr(e.message);
+    } finally {
+      setImproveBusy(false);
     }
   }
 
@@ -514,6 +533,19 @@ export default function OutlineEditor() {
               </tbody>
             </table>
           )}
+          <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-indigo-200 pt-3">
+            <button
+              onClick={improveOutline}
+              disabled={improveBusy}
+              className="rounded bg-indigo-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+            >
+              {improveBusy ? "AI đang nâng cấp..." : "⚡ Nâng cấp đề cương bằng AI"}
+            </button>
+            <span className="text-xs text-slate-500">
+              AI sẽ khắc phục các lỗi/cảnh báo trên và tạo một <b>phiên bản mới (draft)</b> để bạn rà soát
+              — phiên bản hiện tại được giữ nguyên để đối chiếu.
+            </span>
+          </div>
           <p className="mt-2 text-xs text-slate-500">Gợi ý của AI — cần người duyệt xác nhận.</p>
         </section>
       )}
