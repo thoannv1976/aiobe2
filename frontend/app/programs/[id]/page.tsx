@@ -174,6 +174,7 @@ export default function ProgramDetail() {
           <table className="min-w-full border bg-white text-sm">
             <thead>
               <tr className="bg-slate-100">
+                <th className="border p-2 text-center">STT</th>
                 <th className="border p-2 text-left">Học phần</th>
                 {plos.map((p) => (
                   <th key={p.id} className="border p-2">{p.code}</th>
@@ -181,8 +182,9 @@ export default function ProgramDetail() {
               </tr>
             </thead>
             <tbody>
-              {courses.map((c) => (
+              {courses.map((c, idx) => (
                 <tr key={c.id}>
+                  <td className="border p-2 text-center text-slate-500">{idx + 1}</td>
                   <td className="border p-2">
                     <Link href={`/courses/${c.id}`} className="text-indigo-700">
                       {c.code} — {c.name}
