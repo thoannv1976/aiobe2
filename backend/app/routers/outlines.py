@@ -35,6 +35,7 @@ from app.schemas.outline import (
     CloPloOut,
     LessonPlanCreate,
     LessonPlanOut,
+    OutlineBase,
     OutlineCreate,
     OutlineOut,
 )
@@ -496,8 +497,11 @@ def delete_clo_plo(clo_id: int, plo_id: int, db: Session = Depends(get_db), user
 
 
 @router.patch("/outlines/{outline_id}", response_model=OutlineOut)
-def update_outline(outline_id: int, payload: OutlineCreate, db: Session = Depends(get_db), user: User = Depends(LECTURER)):
-    """Cập nhật thông tin chung đề cương (chỉ khi chưa Published)."""
+def update_outline(outline_id: int, payload: OutlineBase, db: Session = Depends(get_db), user: User = Depends(LECTURER)):
+    """Cập nhật thông tin chung đề cương (chỉ khi chưa Published).
+
+    Dùng OutlineBase (không cần course_id) vì đề cương đã được xác định bằng outline_id trên URL.
+    """
     obj = db.get(CourseOutline, outline_id)
     if not obj:
         raise HTTPException(404, "Không tìm thấy đề cương")

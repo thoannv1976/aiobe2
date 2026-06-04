@@ -145,6 +145,24 @@ def test_improve_questions_endpoint(client, monkeypatch):
     assert q["review_status"] == "draft"    # đặt lại để thẩm định
 
 
+def test_update_outline_general_without_course_id(client):
+    """Lưu 'Thông tin chung' đề cương KHÔNG cần course_id (xác định qua URL)."""
+    h = {"Authorization": f"Bearer {_token(client)}"}
+    pid = client.post("/api/programs", json={"name": "PU", "code": "PU"}, headers=h).json()["id"]
+    cid = client.post(f"/api/programs/{pid}/courses",
+                      json={"code": "CU", "name": "Course U"}, headers=h).json()["id"]
+    oid = client.post("/api/outlines", json={"course_id": cid}, headers=h).json()["id"]
+    # Payload giống saveGeneral của frontend (KHÔNG có course_id).
+    r = client.patch(f"/api/outlines/{oid}", headers=h, json={
+        "description": "Mô tả đã sửa",
+        "general_info_json": {"generated_by_ai": True, "improved_from": 18, "qa_score": 82},
+        "teaching_methods_json": ["Thuyết giảng"],
+        "references_json": ["Tài liệu A"],
+    })
+    assert r.status_code == 200, r.text
+    assert r.json()["description"] == "Mô tả đã sửa"
+
+
 def test_matrix_qa_review_endpoint(client, monkeypatch):
     """AI đánh giá ma trận đề thi trả điểm + cảnh báo."""
     import json as _json
