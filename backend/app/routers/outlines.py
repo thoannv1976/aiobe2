@@ -600,19 +600,18 @@ def _plo_by_code(db: Session, course: Course) -> dict[str, Plo]:
     return {p.code: p for p in db.query(Plo).filter(Plo.program_id == course.program_id).all()}
 
 
-def _parse_uploaded_outline(db: Session, course: Course, text: str) -> dict:
-    """Bóc tách văn bản đề cương → dict {outline, detected_course_code, unmatched_plos}."""
-    plos = list(_plo_by_code(db, course).values())
-    plo_codes = {p.code for p in plos}
-    pis = db.query(Pi).filter(Pi.plo_id.in_([p.id for p in plos] or [-1])).all() if plos else []
+def _program_plo_context(db: Session, program_id: int):
+    """Ngữ cảnh PLO/PI dùng chung cho cả chương trình (PLO không phụ thuộc từng học phần)."""
+    plos = db.query(Plo).filter(Plo.program_id == program_id).all()
     plo_code_by_id = {p.id: p.code for p in plos}
-    gen, detected = parse_outline_from_text(
-        course={"code": course.code, "name": course.name},
-        plos=[{"code": p.code, "category": p.category or "", "description": p.description} for p in plos],
-        pis=[{"code": pi.code, "plo_code": plo_code_by_id.get(pi.plo_id, ""), "description": pi.description} for pi in pis],
-        text=text,
-    )
-    # Loại bỏ ánh xạ PLO không khớp chương trình (giữ dữ liệu sạch); ghi nhận để cảnh báo.
+    pis = db.query(Pi).filter(Pi.plo_id.in_([p.id for p in plos] or [-1])).all() if plos else []
+    plo_dicts = [{"code": p.code, "category": p.category or "", "description": p.description} for p in plos]
+    pi_dicts = [{"code": pi.code, "plo_code": plo_code_by_id.get(pi.plo_id, ""), "description": pi.description} for pi in pis]
+    return plo_dicts, pi_dicts, {p.code for p in plos}, {p.code: p for p in plos}
+
+
+def _clean_parsed_plos(gen, plo_codes: set[str]) -> list[str]:
+    """Bỏ ánh xạ PLO không thuộc chương trình; trả danh sách mã PLO bị loại (để cảnh báo)."""
     unmatched: set[str] = set()
     for clo in gen.clos:
         kept = []
@@ -622,10 +621,21 @@ def _parse_uploaded_outline(db: Session, course: Course, text: str) -> dict:
             else:
                 unmatched.add(m.plo_code)
         clo.plos = kept
+    return sorted(unmatched)
+
+
+def _parse_uploaded_outline(db: Session, course: Course, text: str) -> dict:
+    """Bóc tách văn bản đề cương → dict {outline, detected_course_code, unmatched_plos}."""
+    plo_dicts, pi_dicts, plo_codes, _ = _program_plo_context(db, course.program_id)
+    gen, detected = parse_outline_from_text(
+        course={"code": course.code, "name": course.name},
+        plos=plo_dicts, pis=pi_dicts, text=text,
+    )
+    unmatched = _clean_parsed_plos(gen, plo_codes)
     return {
         "outline": gen.model_dump(),
         "detected_course_code": detected,
-        "unmatched_plos": sorted(unmatched),
+        "unmatched_plos": unmatched,
         "clos_without_plo": [c.code for c in gen.clos if not c.plos],
     }
 
@@ -849,7 +859,13 @@ async def bulk_import_outlines(
     if not program:
         raise HTTPException(404, "Không tìm thấy chương trình")
     courses = db.query(Course).filter(Course.program_id == program_id).all()
+    if not courses:
+        raise HTTPException(400, "Chương trình chưa có học phần nào để ghép đề cương.")
+    if not files:
+        raise HTTPException(400, "Chưa chọn file nào.")
     by_code = {c.code.upper(): c for c in courses}
+    # PLO/PI dùng chung toàn chương trình → chỉ tính một lần, bóc tách 1 lần/ file.
+    plo_dicts, pi_dicts, plo_codes, plo_by_code = _program_plo_context(db, program_id)
     os.makedirs(settings.storage_dir, exist_ok=True)
 
     results = []
@@ -862,39 +878,37 @@ async def bulk_import_outlines(
             with open(saved, "wb") as f:
                 f.write(await file.read())
             text = extract_text_from_file(saved, file.content_type)
+            if not (text or "").strip():
+                row["message"] = "Không đọc được nội dung file (rỗng/scan không OCR được)."
+                results.append(row); continue
             doc = Document(type="outline_template", file_path=saved, mime=file.content_type,
                            uploaded_by=user.id, original_name=file.filename, extracted_text=text)
             db.add(doc)
             db.commit()
 
-            # Bóc tách cần ngữ cảnh học phần để ánh xạ PLO. Bóc tách 1 lần với học phần đầu
-            # làm ngữ cảnh tạm để lấy detected_course_code, rồi ghép đúng học phần.
-            ctx_course = courses[0] if courses else None
-            if not ctx_course:
-                row["message"] = "Chương trình chưa có học phần nào."
-                results.append(row); continue
-            res = _parse_uploaded_outline(db, ctx_course, text)
-            detected = (res.get("detected_course_code") or "").upper()
+            # Bóc tách 1 lần (không phụ thuộc học phần — PLO là của cả chương trình).
+            gen, detected = parse_outline_from_text(
+                course={"code": "", "name": ""}, plos=plo_dicts, pis=pi_dicts, text=text,
+            )
+            _clean_parsed_plos(gen, plo_codes)
+            detected_up = (detected or "").upper()
             fname_up = (file.filename or "").upper()
-            match = by_code.get(detected)
+            match = by_code.get(detected_up)
             if not match:
-                match = next((c for code, c in by_code.items() if code and code in fname_up), None)
+                # khớp theo mã học phần xuất hiện trong tên file (ưu tiên mã dài để tránh nhầm)
+                match = next((c for code, c in sorted(by_code.items(), key=lambda kv: -len(kv[0]))
+                              if code and code in fname_up), None)
             if not match:
                 row["message"] = f"Không khớp học phần (mã phát hiện: {detected or '—'})."
                 results.append(row); continue
-
-            # Bóc tách lại đúng ngữ cảnh học phần khớp (để ánh xạ PLO chuẩn).
-            if match.id != ctx_course.id:
-                res = _parse_uploaded_outline(db, match, text)
             row["matched"] = True
             row["course_code"] = match.code
 
-            gen = GeneratedOutline.model_validate(res["outline"])
             if not gen.clos:
-                row["message"] = "Không bóc tách được CLO."
+                row["message"] = "Không bóc tách được CLO từ file."
                 results.append(row); continue
             outline = _write_generated_outline(
-                db, match.id, gen, _plo_by_code(db, match), user,
+                db, match.id, gen, plo_by_code, user,
                 {"imported": True, "source_name": file.filename},
             )
             row["outline_id"] = outline.id
@@ -905,9 +919,12 @@ async def bulk_import_outlines(
                     row["errors"] = len(qa.get("errors") or [])
                     row["warnings"] = len(qa.get("warnings") or [])
                 except Exception as e:  # noqa: BLE001
+                    db.rollback()
                     row["message"] = f"Đã lưu nhưng chấm chất lượng lỗi: {e}"
             row["message"] = row["message"] or "OK"
         except Exception as e:  # noqa: BLE001
+            # Quan trọng: rollback để 1 file lỗi KHÔNG làm hỏng session của các file sau.
+            db.rollback()
             row["message"] = f"Lỗi: {e}"
         results.append(row)
 

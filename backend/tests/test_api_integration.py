@@ -311,3 +311,46 @@ def test_bulk_import_outlines(client, monkeypatch):
     rows = r.json()["results"]
     assert rows[0]["matched"] and rows[0]["course_code"] == "CS100"
     assert rows[0]["score"] == 80 and rows[0]["outline_id"]
+
+
+def test_bulk_import_one_bad_file_does_not_break_others(client, monkeypatch):
+    """Một file lỗi (parse raise) KHÔNG được làm hỏng các file sau trong cùng request."""
+    import json as _json
+
+    from app.services import outline_ai, qa_review
+
+    h = {"Authorization": f"Bearer {_token(client)}"}
+    pid = client.post("/api/programs", json={"name": "PB2", "code": "PB2"}, headers=h).json()["id"]
+    client.post(f"/api/programs/{pid}/plos", json={"code": "PLO1", "description": "x"}, headers=h)
+    client.post(f"/api/programs/{pid}/courses", json={"code": "EE200", "name": "B"}, headers=h)
+
+    good = {"detected_course_code": "EE200", "description": "d", "teaching_methods": [],
+            "references": [], "clos": [{"code": "CLO1", "description": "Hiểu", "description_en": "U",
+            "bloom_level": "understand", "plos": [{"plo_code": "PLO1", "level": "R"}]}],
+            "assessments": [], "lessons": []}
+
+    calls = {"n": 0}
+
+    def flaky(system, user, max_tokens=12000):
+        # File đầu: parse lỗi (JSON hỏng) → raise; file sau: trả JSON hợp lệ.
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return "KHÔNG PHẢI JSON"
+        return _json.dumps(good, ensure_ascii=False)
+
+    monkeypatch.setattr(outline_ai, "llm_complete", flaky)
+    monkeypatch.setattr(qa_review, "llm_complete",
+                        lambda system, user, max_tokens=8000: _json.dumps({
+                            "score": 75, "summary": "s", "errors": [], "warnings": [], "clo_reviews": []},
+                            ensure_ascii=False))
+
+    r = client.post(f"/api/programs/{pid}/import-outlines", headers=h, files=[
+        ("files", ("bad.txt", b"loi parse EE200", "text/plain")),
+        ("files", ("ok.txt", b"De cuong EE200", "text/plain")),
+    ])
+    assert r.status_code == 200, r.text
+    rows = r.json()["results"]
+    assert rows[0]["message"].startswith("Lỗi")          # file đầu lỗi
+    assert rows[0]["outline_id"] is None
+    # File thứ 2 vẫn lưu + chấm thành công (session không bị hỏng).
+    assert rows[1]["matched"] and rows[1]["outline_id"] and rows[1]["score"] == 75

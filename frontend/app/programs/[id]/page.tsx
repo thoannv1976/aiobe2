@@ -39,16 +39,25 @@ export default function ProgramDetail() {
   async function bulkImport(files: FileList) {
     setErr("");
     setBulkResults(null);
+    // Mỗi file mất vài giây gọi AI; nhiều file một lượt dễ quá thời gian chờ.
+    // Cảnh báo nhẹ để người dùng chia nhỏ mẻ.
+    if (files.length > 15 &&
+        !confirm(`Bạn chọn ${files.length} file. Xử lý nhiều file cùng lúc có thể lâu/quá thời gian chờ. ` +
+                 `Nên import theo từng mẻ ~10-15 file. Vẫn tiếp tục?`)) {
+      return;
+    }
     setBulkBusy(true);
     try {
       const fd = new FormData();
       Array.from(files).forEach((f) => fd.append("files", f));
       const res = await apiUpload(`/api/programs/${id}/import-outlines`, fd);
       setBulkResults(res.results || []);
-      await loadHealth();
     } catch (e: any) {
-      setErr(e.message);
+      // Mỗi file được lưu ngay khi xử lý xong; nếu request quá thời gian chờ,
+      // một số đề cương vẫn có thể đã lưu — làm mới bảng để thấy.
+      setErr(`${e.message}. Một số file có thể đã được lưu — xem bảng sức khỏe bên dưới.`);
     } finally {
+      await loadHealth();
       setBulkBusy(false);
     }
   }
