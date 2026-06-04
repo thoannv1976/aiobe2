@@ -846,18 +846,17 @@ def _latest_outline_by_course(db: Session, program_id: int) -> dict[int, CourseO
     return out
 
 
-@router.post("/programs/{program_id}/import-outlines")
-async def bulk_import_outlines(
+@router.post("/programs/{program_id}/parse-outlines")
+async def parse_outlines_upload(
     program_id: int,
     files: list[UploadFile],
-    run_qa: bool = True,
     db: Session = Depends(get_db),
     user: User = Depends(LECTURER),
 ):
-    """Import nhiều đề cương cùng lúc cho một chương trình (SPEC 4.3, Phase 3).
+    """BƯỚC 1 (import hàng loạt): bóc tách nhiều đề cương để RÀ SOÁT — CHƯA lưu.
 
-    Mỗi file: bóc tách bằng AI → ghép với học phần (theo mã học phần phát hiện được hoặc
-    có trong tên file) → lưu draft → (tùy chọn) tự chấm chất lượng. Trả bảng kết quả.
+    Mỗi file: đọc văn bản → AI bóc tách → GỢI Ý học phần (theo mã phát hiện/tên file) nhưng
+    KHÔNG tự lưu. Trả cấu trúc đề cương + gợi ý để người dùng XÁC NHẬN đúng học phần ở bước 2.
     """
     program = db.get(Program, program_id)
     if not program:
@@ -868,14 +867,14 @@ async def bulk_import_outlines(
     if not files:
         raise HTTPException(400, "Chưa chọn file nào.")
     by_code = {c.code.upper(): c for c in courses}
-    # PLO/PI dùng chung toàn chương trình → chỉ tính một lần, bóc tách 1 lần/ file.
-    plo_dicts, pi_dicts, plo_codes, plo_by_code = _program_plo_context(db, program_id)
+    plo_dicts, pi_dicts, plo_codes, _ = _program_plo_context(db, program_id)
     os.makedirs(settings.storage_dir, exist_ok=True)
 
-    results = []
+    rows = []
     for file in files:
-        row = {"filename": file.filename, "matched": False, "course_code": None,
-               "outline_id": None, "score": None, "errors": 0, "warnings": 0, "message": ""}
+        row = {"filename": file.filename, "document_id": None, "detected_course_code": None,
+               "suggested_course_id": None, "suggested_course_code": None,
+               "clos_count": 0, "unmatched_plos": [], "outline": None, "error": None}
         try:
             ext = os.path.splitext(file.filename or "")[1]
             saved = os.path.join(settings.storage_dir, f"{uuid.uuid4().hex}{ext}")
@@ -883,40 +882,92 @@ async def bulk_import_outlines(
                 f.write(await file.read())
             text = extract_text_from_file(saved, file.content_type)
             if not (text or "").strip():
-                row["message"] = "Không đọc được nội dung file (rỗng/scan không OCR được)."
-                results.append(row); continue
+                row["error"] = "Không đọc được nội dung file (rỗng/scan không OCR được)."
+                rows.append(row); continue
             doc = Document(type="outline_template", file_path=saved, mime=file.content_type,
                            uploaded_by=user.id, original_name=file.filename, extracted_text=text)
             db.add(doc)
             db.commit()
+            row["document_id"] = doc.id
 
-            # Bóc tách 1 lần (không phụ thuộc học phần — PLO là của cả chương trình).
             gen, detected = parse_outline_from_text(
                 course={"code": "", "name": ""}, plos=plo_dicts, pis=pi_dicts, text=text,
             )
-            _clean_parsed_plos(gen, plo_codes)
+            row["unmatched_plos"] = _clean_parsed_plos(gen, plo_codes)
+            row["detected_course_code"] = detected or ""
+            row["clos_count"] = len(gen.clos)
+            row["outline"] = gen.model_dump()
+            # GỢI Ý học phần (người dùng có thể đổi). Ưu tiên mã phát hiện, rồi mã trong tên file.
             detected_up = (detected or "").upper()
             fname_up = (file.filename or "").upper()
             match = by_code.get(detected_up)
             if not match:
-                # khớp theo mã học phần xuất hiện trong tên file (ưu tiên mã dài để tránh nhầm)
                 match = next((c for code, c in sorted(by_code.items(), key=lambda kv: -len(kv[0]))
                               if code and code in fname_up), None)
-            if not match:
-                row["message"] = f"Không khớp học phần (mã phát hiện: {detected or '—'})."
-                results.append(row); continue
-            row["matched"] = True
-            row["course_code"] = match.code
+            if match:
+                row["suggested_course_id"] = match.id
+                row["suggested_course_code"] = match.code
+        except Exception as e:  # noqa: BLE001
+            db.rollback()
+            row["error"] = f"Lỗi bóc tách: {e}"
+        rows.append(row)
 
-            if not gen.clos:
-                row["message"] = "Không bóc tách được CLO từ file."
+    log_action(db, user.id, "outline", None, "bulk_parse", {"program_id": program_id, "count": len(files)})
+    return {
+        "program_id": program_id,
+        "courses": [{"id": c.id, "code": c.code, "name": c.name} for c in courses],
+        "rows": rows,
+    }
+
+
+class ConfirmImportItem(BaseModel):
+    """Một đề cương đã rà soát + học phần được người dùng GÁN tường minh."""
+    course_id: int
+    outline: GeneratedOutline
+    source_name: str = ""
+
+
+class ConfirmImportIn(BaseModel):
+    items: list[ConfirmImportItem]
+    run_qa: bool = True
+
+
+@router.post("/programs/{program_id}/import-outlines-confirm")
+def confirm_import_outlines(
+    program_id: int,
+    payload: ConfirmImportIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(LECTURER),
+):
+    """BƯỚC 2 (import hàng loạt): lưu các đề cương theo ĐÚNG học phần người dùng đã chọn.
+
+    Mỗi mục gắn course_id tường minh → KHÔNG còn rủi ro map sai như tự đoán theo mã.
+    """
+    program = db.get(Program, program_id)
+    if not program:
+        raise HTTPException(404, "Không tìm thấy chương trình")
+    if not payload.items:
+        raise HTTPException(400, "Chưa có mục nào để lưu.")
+
+    results = []
+    for it in payload.items:
+        row = {"course_id": it.course_id, "course_code": None, "outline_id": None,
+               "score": None, "errors": 0, "warnings": 0, "message": ""}
+        try:
+            course = db.get(Course, it.course_id)
+            if not course or course.program_id != program_id:
+                row["message"] = "Học phần không hợp lệ (không thuộc chương trình)."
+                results.append(row); continue
+            row["course_code"] = course.code
+            if not it.outline.clos:
+                row["message"] = "Đề cương chưa có CLO để lưu."
                 results.append(row); continue
             outline = _write_generated_outline(
-                db, match.id, gen, plo_by_code, user,
-                {"imported": True, "source_name": file.filename},
+                db, course.id, it.outline, _plo_by_code(db, course), user,
+                {"imported": True, "source_name": it.source_name or None},
             )
             row["outline_id"] = outline.id
-            if run_qa:
+            if payload.run_qa:
                 try:
                     qa = _run_outline_qa(db, outline.id)
                     row["score"] = qa.get("score")
@@ -927,13 +978,12 @@ async def bulk_import_outlines(
                     row["message"] = f"Đã lưu nhưng chấm chất lượng lỗi: {e}"
             row["message"] = row["message"] or "OK"
         except Exception as e:  # noqa: BLE001
-            # Quan trọng: rollback để 1 file lỗi KHÔNG làm hỏng session của các file sau.
             db.rollback()
             row["message"] = f"Lỗi: {e}"
         results.append(row)
 
-    log_action(db, user.id, "outline", None, "bulk_import",
-               {"program_id": program_id, "count": len(files)})
+    log_action(db, user.id, "outline", None, "bulk_import_confirm",
+               {"program_id": program_id, "count": len(payload.items)})
     return {"program_id": program_id, "results": results}
 
 

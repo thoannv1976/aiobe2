@@ -23,6 +23,9 @@ export default function ProgramDetail() {
   const [healthBusy, setHealthBusy] = useState(false);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkResults, setBulkResults] = useState<any[] | null>(null);
+  // Import 2 bước: parse → gán học phần → xác nhận lưu
+  const [bulkParsed, setBulkParsed] = useState<any>(null); // {courses, rows}
+  const [rowCourse, setRowCourse] = useState<Record<number, string>>({}); // index → course_id (chuỗi)
 
   async function loadHealth() {
     setErr("");
@@ -36,26 +39,56 @@ export default function ProgramDetail() {
     }
   }
 
-  async function bulkImport(files: FileList) {
+  // Bước 1: bóc tách (chưa lưu) → gợi ý học phần để người dùng xác nhận.
+  async function parseFiles(files: FileList) {
     setErr("");
     setBulkResults(null);
-    // Mỗi file mất vài giây gọi AI; nhiều file một lượt dễ quá thời gian chờ.
-    // Cảnh báo nhẹ để người dùng chia nhỏ mẻ.
+    setBulkParsed(null);
     if (files.length > 15 &&
-        !confirm(`Bạn chọn ${files.length} file. Xử lý nhiều file cùng lúc có thể lâu/quá thời gian chờ. ` +
-                 `Nên import theo từng mẻ ~10-15 file. Vẫn tiếp tục?`)) {
+        !confirm(`Bạn chọn ${files.length} file. Xử lý nhiều file cùng lúc có thể lâu. ` +
+                 `Nên làm theo từng mẻ ~10-15 file. Vẫn tiếp tục?`)) {
       return;
     }
     setBulkBusy(true);
     try {
       const fd = new FormData();
       Array.from(files).forEach((f) => fd.append("files", f));
-      const res = await apiUpload(`/api/programs/${id}/import-outlines`, fd);
-      setBulkResults(res.results || []);
+      const res = await apiUpload(`/api/programs/${id}/parse-outlines`, fd);
+      setBulkParsed(res);
+      // Khởi tạo lựa chọn học phần = gợi ý của AI (người dùng có thể đổi).
+      const init: Record<number, string> = {};
+      (res.rows || []).forEach((r: any, i: number) => {
+        init[i] = r.suggested_course_id ? String(r.suggested_course_id) : "";
+      });
+      setRowCourse(init);
     } catch (e: any) {
-      // Mỗi file được lưu ngay khi xử lý xong; nếu request quá thời gian chờ,
-      // một số đề cương vẫn có thể đã lưu — làm mới bảng để thấy.
-      setErr(`${e.message}. Một số file có thể đã được lưu — xem bảng sức khỏe bên dưới.`);
+      setErr(e.message);
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
+  // Bước 2: lưu theo ĐÚNG học phần đã chọn cho từng file.
+  async function confirmImport() {
+    setErr("");
+    const items = (bulkParsed.rows || [])
+      .map((r: any, i: number) => ({ r, cid: rowCourse[i] }))
+      .filter((x: any) => x.r.outline && x.cid)
+      .map((x: any) => ({ course_id: Number(x.cid), outline: x.r.outline, source_name: x.r.filename }));
+    if (items.length === 0) {
+      setErr("Hãy chọn học phần cho ít nhất một file bóc tách thành công.");
+      return;
+    }
+    setBulkBusy(true);
+    try {
+      const res = await api(`/api/programs/${id}/import-outlines-confirm`, {
+        method: "POST",
+        body: JSON.stringify({ items, run_qa: true }),
+      });
+      setBulkResults(res.results || []);
+      setBulkParsed(null);
+    } catch (e: any) {
+      setErr(e.message);
     } finally {
       await loadHealth();
       setBulkBusy(false);
@@ -259,10 +292,10 @@ export default function ProgramDetail() {
           <h2 className="text-lg font-semibold">Sức khỏe đề cương toàn ngành</h2>
           <div className="flex flex-wrap gap-2">
             <label className={`cursor-pointer rounded bg-amber-500 px-3 py-1.5 text-sm text-white ${bulkBusy ? "opacity-50" : ""}`}
-              title="Tải lên nhiều đề cương đã có (PDF/DOCX) — AI bóc tách, ghép học phần theo mã, lưu draft và chấm điểm">
-              {bulkBusy ? "Đang import..." : "⬆ Import hàng loạt đề cương"}
+              title="Tải lên nhiều đề cương đã có (PDF/DOCX). AI bóc tách + GỢI Ý học phần; bạn xác nhận đúng học phần rồi mới lưu.">
+              {bulkBusy ? "Đang xử lý..." : "⬆ Import hàng loạt (chọn nhiều file)"}
               <input type="file" multiple accept=".pdf,.docx,.txt" className="hidden" disabled={bulkBusy}
-                onChange={(e) => e.target.files?.length && bulkImport(e.target.files)} />
+                onChange={(e) => e.target.files?.length && parseFiles(e.target.files)} />
             </label>
             <button onClick={loadHealth} disabled={healthBusy}
               className="rounded bg-indigo-600 px-3 py-1.5 text-sm text-white disabled:opacity-50">
@@ -271,12 +304,70 @@ export default function ProgramDetail() {
           </div>
         </div>
 
+        {/* Bước rà soát: gán đúng học phần cho từng file trước khi lưu */}
+        {bulkParsed && (
+          <div className="mb-3 rounded border border-amber-400 bg-white p-3 text-xs">
+            <div className="mb-2 font-semibold">
+              Xác nhận học phần cho từng đề cương ({bulkParsed.rows.length} file) — kiểm tra/đổi học phần nếu AI gợi ý sai, rồi bấm Lưu.
+            </div>
+            <table className="w-full border">
+              <thead>
+                <tr className="bg-slate-100">
+                  <th className="border p-1 text-left">File</th>
+                  <th className="border p-1">Mã AI đọc</th>
+                  <th className="border p-1">CLO</th>
+                  <th className="border p-1 text-left">Gán vào học phần</th>
+                  <th className="border p-1 text-left">Ghi chú</th>
+                </tr>
+              </thead>
+              <tbody>
+                {bulkParsed.rows.map((r: any, i: number) => (
+                  <tr key={i} className={r.error ? "bg-red-50" : ""}>
+                    <td className="border p-1">{r.filename}</td>
+                    <td className="border p-1 text-center">{r.detected_course_code || "—"}</td>
+                    <td className="border p-1 text-center">{r.error ? "—" : r.clos_count}</td>
+                    <td className="border p-1">
+                      {r.error ? (
+                        <span className="text-red-600">không lưu được</span>
+                      ) : (
+                        <select value={rowCourse[i] || ""}
+                          onChange={(e) => setRowCourse((p) => ({ ...p, [i]: e.target.value }))}
+                          className={`w-full rounded border p-1 ${!rowCourse[i] ? "border-amber-500 bg-amber-50" : ""}`}>
+                          <option value="">— Chọn học phần —</option>
+                          {bulkParsed.courses.map((c: any) => (
+                            <option key={c.id} value={c.id}>{c.code} — {c.name}</option>
+                          ))}
+                        </select>
+                      )}
+                    </td>
+                    <td className="border p-1 text-amber-700">
+                      {r.error
+                        ? r.error
+                        : !r.suggested_course_id
+                        ? "AI không chắc — hãy chọn thủ công"
+                        : (r.unmatched_plos?.length ? `PLO bỏ: ${r.unmatched_plos.join(", ")}` : "")}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div className="mt-2 flex gap-2">
+              <button onClick={confirmImport} disabled={bulkBusy}
+                className="rounded bg-amber-600 px-4 py-2 font-medium text-white disabled:opacity-50">
+                {bulkBusy ? "Đang lưu..." : "Lưu các đề cương đã gán & chấm điểm"}
+              </button>
+              <button onClick={() => { setBulkParsed(null); setRowCourse({}); }}
+                className="rounded bg-slate-100 px-4 py-2 hover:bg-slate-200">Huỷ</button>
+            </div>
+          </div>
+        )}
+
         {bulkResults && (
           <div className="mb-3 rounded border bg-white p-2 text-xs">
-            <b>Kết quả import {bulkResults.length} file:</b>
+            <b>Kết quả lưu {bulkResults.length} đề cương:</b>
             {bulkResults.map((r, i) => (
-              <div key={i} className={r.matched ? "text-green-700" : "text-amber-700"}>
-                {r.matched ? "✓" : "⚠"} {r.filename} → {r.course_code || "(không khớp)"}
+              <div key={i} className={r.outline_id ? "text-green-700" : "text-amber-700"}>
+                {r.outline_id ? "✓" : "⚠"} {r.course_code || "(học phần?)"}
                 {r.score != null ? ` · điểm ${r.score}/100` : ""} · {r.message}
               </div>
             ))}

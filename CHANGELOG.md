@@ -11,9 +11,11 @@
     `POST /api/courses/{id}/import-outline`.
   - *Phase 2:* sau khi import, tự động chạy kiểm tra chất lượng (qa-review) và hiện điểm + lỗ hổng,
     kèm nút ⚡ Nâng cấp. Mỗi lần chấm lưu snapshot điểm vào đề cương.
-  - *Phase 3:* **import hàng loạt** cho cả chương trình (ghép học phần theo mã phát hiện/tên file,
-    lưu draft + tự chấm) và **bảng "sức khỏe đề cương toàn ngành"** (điểm AI, số lỗi/cảnh báo từng
-    học phần). Endpoint `POST /api/programs/{id}/import-outlines`, `GET /api/programs/{id}/outline-health`.
+  - *Phase 3:* **import hàng loạt** cho cả chương trình theo quy trình **2 bước có xác nhận**: AI
+    bóc tách + GỢI Ý học phần (không tự lưu) → người dùng **gán đúng học phần cho từng file** → mới
+    lưu (đảm bảo gắn chính xác đề cương–học phần, tránh map sai). Kèm **bảng "sức khỏe đề cương toàn
+    ngành"** (điểm AI, số lỗi/cảnh báo từng học phần). Endpoint `POST /api/programs/{id}/parse-outlines`,
+    `POST /api/programs/{id}/import-outlines-confirm`, `GET /api/programs/{id}/outline-health`.
 - **Nâng cấp đề cương bằng AI** sau khi kiểm tra chất lượng (4.3 / mục 14): từ kết quả kiểm tra
   chất lượng (điểm, lỗi, cảnh báo, gợi ý từng CLO), AI soạn lại toàn bộ đề cương khắc phục từng
   điểm — thống nhất thang đo CLO nhận thức/thái độ, bổ sung cấu phần đánh giá quá trình, cân

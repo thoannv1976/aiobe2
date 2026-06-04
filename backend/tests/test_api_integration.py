@@ -301,8 +301,8 @@ def test_import_existing_outline_flow(client, monkeypatch):
     assert row["has_outline"] and row["qa_score"] == 64 and row["qa_errors"] == 1 and row["qa_warnings"] == 2
 
 
-def test_bulk_import_outlines(client, monkeypatch):
-    """Phase 3: import hàng loạt → khớp học phần theo mã phát hiện → lưu + chấm."""
+def test_bulk_import_two_step(client, monkeypatch):
+    """Phase 3 (2 bước): parse → gợi ý học phần → người dùng XÁC NHẬN course_id → lưu + chấm."""
     import json as _json
 
     from app.services import outline_ai, qa_review
@@ -310,7 +310,8 @@ def test_bulk_import_outlines(client, monkeypatch):
     h = {"Authorization": f"Bearer {_token(client)}"}
     pid = client.post("/api/programs", json={"name": "PB", "code": "PB"}, headers=h).json()["id"]
     client.post(f"/api/programs/{pid}/plos", json={"code": "PLO1", "description": "x"}, headers=h)
-    client.post(f"/api/programs/{pid}/courses", json={"code": "CS100", "name": "A"}, headers=h)
+    cid = client.post(f"/api/programs/{pid}/courses",
+                      json={"code": "CS100", "name": "A"}, headers=h).json()["id"]
 
     parsed = {"detected_course_code": "CS100", "description": "d", "teaching_methods": [],
               "references": [], "clos": [{"code": "CLO1", "description": "Hiểu", "description_en": "U",
@@ -323,52 +324,44 @@ def test_bulk_import_outlines(client, monkeypatch):
                             "score": 80, "summary": "s", "errors": [], "warnings": [], "clo_reviews": []},
                             ensure_ascii=False))
 
-    r = client.post(f"/api/programs/{pid}/import-outlines", headers=h,
+    # Bước 1: parse (chưa lưu) → gợi ý đúng học phần.
+    r = client.post(f"/api/programs/{pid}/parse-outlines", headers=h,
                     files=[("files", ("a.txt", b"De cuong CS100", "text/plain"))])
     assert r.status_code == 200, r.text
-    rows = r.json()["results"]
-    assert rows[0]["matched"] and rows[0]["course_code"] == "CS100"
-    assert rows[0]["score"] == 80 and rows[0]["outline_id"]
+    body = r.json()
+    assert any(c["id"] == cid for c in body["courses"])
+    row = body["rows"][0]
+    assert row["detected_course_code"] == "CS100"
+    assert row["suggested_course_id"] == cid and row["clos_count"] == 1
+    assert row["outline"] and row["error"] is None
+
+    # Bước 2: người dùng xác nhận course_id tường minh → lưu + chấm.
+    r = client.post(f"/api/programs/{pid}/import-outlines-confirm", headers=h, json={
+        "items": [{"course_id": cid, "outline": row["outline"], "source_name": "a.txt"}],
+        "run_qa": True,
+    })
+    assert r.status_code == 200, r.text
+    res = r.json()["results"][0]
+    assert res["course_code"] == "CS100" and res["outline_id"] and res["score"] == 80
 
 
-def test_bulk_import_one_bad_file_does_not_break_others(client, monkeypatch):
-    """Một file lỗi (parse raise) KHÔNG được làm hỏng các file sau trong cùng request."""
+def test_bulk_import_confirm_rejects_wrong_program_course(client, monkeypatch):
+    """Xác nhận import từ chối học phần KHÔNG thuộc chương trình (đảm bảo gắn đúng)."""
     import json as _json
 
-    from app.services import outline_ai, qa_review
-
     h = {"Authorization": f"Bearer {_token(client)}"}
-    pid = client.post("/api/programs", json={"name": "PB2", "code": "PB2"}, headers=h).json()["id"]
-    client.post(f"/api/programs/{pid}/plos", json={"code": "PLO1", "description": "x"}, headers=h)
-    client.post(f"/api/programs/{pid}/courses", json={"code": "EE200", "name": "B"}, headers=h)
+    pid = client.post("/api/programs", json={"name": "PX", "code": "PX"}, headers=h).json()["id"]
+    other_pid = client.post("/api/programs", json={"name": "PY", "code": "PY"}, headers=h).json()["id"]
+    other_cid = client.post(f"/api/programs/{other_pid}/courses",
+                            json={"code": "ZZ9", "name": "Z"}, headers=h).json()["id"]
 
-    good = {"detected_course_code": "EE200", "description": "d", "teaching_methods": [],
-            "references": [], "clos": [{"code": "CLO1", "description": "Hiểu", "description_en": "U",
-            "bloom_level": "understand", "plos": [{"plo_code": "PLO1", "level": "R"}]}],
-            "assessments": [], "lessons": []}
-
-    calls = {"n": 0}
-
-    def flaky(system, user, max_tokens=12000):
-        # File đầu: parse lỗi (JSON hỏng) → raise; file sau: trả JSON hợp lệ.
-        calls["n"] += 1
-        if calls["n"] == 1:
-            return "KHÔNG PHẢI JSON"
-        return _json.dumps(good, ensure_ascii=False)
-
-    monkeypatch.setattr(outline_ai, "llm_complete", flaky)
-    monkeypatch.setattr(qa_review, "llm_complete",
-                        lambda system, user, max_tokens=8000: _json.dumps({
-                            "score": 75, "summary": "s", "errors": [], "warnings": [], "clo_reviews": []},
-                            ensure_ascii=False))
-
-    r = client.post(f"/api/programs/{pid}/import-outlines", headers=h, files=[
-        ("files", ("bad.txt", b"loi parse EE200", "text/plain")),
-        ("files", ("ok.txt", b"De cuong EE200", "text/plain")),
-    ])
+    outline = {"description": "d", "teaching_methods": [], "references": [],
+               "clos": [{"code": "CLO1", "description": "x", "description_en": "", "bloom_level": "understand", "plos": []}],
+               "assessments": [], "lessons": []}
+    # Gán course của chương trình khác → phải bị từ chối.
+    r = client.post(f"/api/programs/{pid}/import-outlines-confirm", headers=h, json={
+        "items": [{"course_id": other_cid, "outline": outline}], "run_qa": False,
+    })
     assert r.status_code == 200, r.text
-    rows = r.json()["results"]
-    assert rows[0]["message"].startswith("Lỗi")          # file đầu lỗi
-    assert rows[0]["outline_id"] is None
-    # File thứ 2 vẫn lưu + chấm thành công (session không bị hỏng).
-    assert rows[1]["matched"] and rows[1]["outline_id"] and rows[1]["score"] == 75
+    res = r.json()["results"][0]
+    assert res["outline_id"] is None and "không hợp lệ" in res["message"].lower()
