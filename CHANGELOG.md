@@ -1,5 +1,18 @@
 # Nhật ký phiên bản — AIOBE / OBE-AUN-QA
 
+## v1.2.0 — 2026-06-05 — Chịu tải (Nhóm A)
+
+### Hiệu năng & quy mô
+- **Đánh index** các cột lọc/khóa ngoại trọng yếu (course_id, outline_id, clo_id, review_status,
+  program_id…) + composite `(course_id, review_status)` và `(course_id, is_deleted)` cho bảng câu hỏi.
+  Migration `7a1c9f2b3d4e` chạy idempotent (chỉ tạo index còn thiếu) — an toàn cho DB đang có dữ liệu.
+- **Phân trang** các endpoint danh sách (câu hỏi, đề thi, đề cương, audit log): tham số `limit`/`offset`,
+  tổng số ở header `X-Total-Count`; tránh `query.all()` không giới hạn. Frontend ngân hàng câu hỏi có
+  nút Trước/Sau + hiển thị "X–Y / tổng".
+- **Cấu hình pool kết nối DB** cho Postgres/Cloud SQL (pool_size, max_overflow, pool_recycle 30',
+  pool_timeout, pre_ping) — env-driven; tùy chọn **Cloud SQL Python Connector** khi đặt
+  `INSTANCE_CONNECTION_NAME`.
+
 ## v1.1.0 — 2026-06-03
 
 ### Thêm mới

@@ -25,6 +25,20 @@ class Settings(BaseSettings):
 
     cors_origins: str = "http://localhost:3000"
 
+    # Pool kết nối DB (Postgres/Cloud SQL). Bỏ qua với SQLite.
+    db_pool_size: int = 5          # số kết nối thường trực mỗi instance
+    db_max_overflow: int = 10      # kết nối tạm khi cao điểm
+    db_pool_recycle: int = 1800    # tái tạo kết nối sau 30' (tránh kết nối chết của Cloud SQL)
+    db_pool_timeout: int = 30      # giây chờ lấy kết nối từ pool
+
+    # (Tùy chọn) Cloud SQL Python Connector — chỉ bật khi đặt instance_connection_name.
+    # Không đặt → dùng database_url như thường (vd unix socket /cloudsql/...).
+    instance_connection_name: str = ""   # project:region:instance
+    db_user: str = ""
+    db_password: str = ""
+    db_name: str = ""
+    db_use_private_ip: bool = False
+
 
 @lru_cache
 def get_settings() -> Settings:

@@ -145,6 +145,29 @@ def test_improve_questions_endpoint(client, monkeypatch):
     assert q["review_status"] == "draft"    # đặt lại để thẩm định
 
 
+def test_questions_pagination(client):
+    """Phân trang ngân hàng câu hỏi: limit/offset + tổng số ở header X-Total-Count."""
+    h = {"Authorization": f"Bearer {_token(client)}"}
+    pid = client.post("/api/programs", json={"name": "PP", "code": "PP"}, headers=h).json()["id"]
+    cid = client.post(f"/api/programs/{pid}/courses",
+                      json={"code": "CP", "name": "Course P"}, headers=h).json()["id"]
+    for i in range(5):
+        client.post(f"/api/courses/{cid}/questions", json={
+            "bloom_level": "remember", "difficulty": "easy", "type": "mcq_single",
+            "content": f"Câu {i}", "answer": "A",
+        }, headers=h)
+
+    r = client.get(f"/api/courses/{cid}/questions?limit=2&offset=0", headers=h)
+    assert r.status_code == 200, r.text
+    assert len(r.json()) == 2
+    assert r.headers["X-Total-Count"] == "5"          # tổng số đúng dù trang chỉ 2
+
+    r2 = client.get(f"/api/courses/{cid}/questions?limit=2&offset=4", headers=h)
+    assert len(r2.json()) == 1                          # trang cuối còn 1
+    # limit vượt trần bị từ chối (bảo vệ khỏi truy vấn không giới hạn)
+    assert client.get(f"/api/courses/{cid}/questions?limit=99999", headers=h).status_code == 422
+
+
 def test_update_outline_general_without_course_id(client):
     """Lưu 'Thông tin chung' đề cương KHÔNG cần course_id (xác định qua URL)."""
     h = {"Authorization": f"Bearer {_token(client)}"}

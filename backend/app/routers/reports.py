@@ -2,11 +2,12 @@ import io
 import json
 import zipfile
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.core.deps import get_current_user, require_roles
+from app.core.pagination import limit_param, offset_param, paginate
 from app.database import get_db
 from app.models import AuditLog, Document, Program, Role, User
 from app.services.reports import program_coverage_report
@@ -47,16 +48,19 @@ def coverage_report(program_id: int, db: Session = Depends(get_db), _: User = De
 
 @router.get("/audit-logs")
 def audit_logs(
+    response: Response,
     entity: str | None = None,
-    limit: int = 100,
+    limit: int = limit_param(),
+    offset: int = offset_param(),
     db: Session = Depends(get_db),
     _: User = Depends(QA),
 ):
-    """Nhật ký kiểm định: ai – làm gì – khi nào (SPEC 4.7)."""
+    """Nhật ký kiểm định: ai – làm gì – khi nào (SPEC 4.7). Phân trang (X-Total-Count)."""
     q = db.query(AuditLog)
     if entity:
         q = q.filter(AuditLog.entity == entity)
-    rows = q.order_by(AuditLog.id.desc()).limit(limit).all()
+    q = q.order_by(AuditLog.id.desc())
+    rows = paginate(q, response, limit, offset)
     return [
         {
             "id": r.id, "user_id": r.user_id, "entity": r.entity, "entity_id": r.entity_id,

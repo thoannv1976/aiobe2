@@ -1,8 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.core.deps import get_current_user, require_roles
+from app.core.pagination import limit_param, offset_param, paginate
 from app.database import get_db
 from app.models import Exam, ExamMatrix, ExamQuestion, Question, Role, User
 from app.schemas.exam import ExamGenerateIn, ExamOut
@@ -89,8 +90,17 @@ def generate(payload: ExamGenerateIn, db: Session = Depends(get_db), user: User 
 
 
 @router.get("/courses/{course_id}/exams", response_model=list[ExamOut])
-def list_exams(course_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
-    return db.query(Exam).filter(Exam.course_id == course_id).all()
+def list_exams(
+    course_id: int,
+    response: Response,
+    limit: int = limit_param(),
+    offset: int = offset_param(),
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """Liệt kê đề thi của học phần (phân trang; tổng số ở header X-Total-Count)."""
+    query = db.query(Exam).filter(Exam.course_id == course_id).order_by(Exam.id.desc())
+    return paginate(query, response, limit, offset)
 
 
 @router.get("/exams/{exam_id}/blueprint")

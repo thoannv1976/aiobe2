@@ -1,13 +1,14 @@
 import os
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Response, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.core.deps import get_current_user, require_roles
+from app.core.pagination import limit_param, offset_param, paginate
 from app.database import get_db
 from app.models import (
     Assessment,
@@ -71,13 +72,21 @@ def _outline_out(o: CourseOutline) -> OutlineOut:
 
 
 @router.get("/courses/{course_id}/outlines", response_model=list[OutlineOut])
-def list_outlines(course_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
-    return (
+def list_outlines(
+    course_id: int,
+    response: Response,
+    limit: int = limit_param(),
+    offset: int = offset_param(),
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """Liệt kê các phiên bản đề cương của học phần (phân trang; tổng số ở X-Total-Count)."""
+    query = (
         db.query(CourseOutline)
         .filter(CourseOutline.course_id == course_id)
         .order_by(CourseOutline.version.desc())
-        .all()
     )
+    return paginate(query, response, limit, offset)
 
 
 @router.post("/outlines", response_model=OutlineOut, status_code=201)

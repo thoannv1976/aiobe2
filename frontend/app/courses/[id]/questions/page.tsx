@@ -1,7 +1,9 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { api, apiUpload, API_BASE, getToken } from "@/lib/api";
+import { api, apiPaged, apiUpload, API_BASE, getToken } from "@/lib/api";
+
+const Q_PAGE_SIZE = 50;
 
 const BLOOM: Record<string, string> = {
   remember: "Nhớ",
@@ -129,7 +131,18 @@ export default function QuestionsPage() {
 
   const [clos, setClos] = useState<Clo[]>([]);
   const [questions, setQuestions] = useState<Question[]>([]);
+  const [qTotal, setQTotal] = useState(0);
+  const [qOffset, setQOffset] = useState(0);
   const [stats, setStats] = useState<Stats | null>(null);
+
+  async function loadQuestions(offset: number) {
+    const { items, total } = await apiPaged<Question>(
+      `/api/courses/${id}/questions?limit=${Q_PAGE_SIZE}&offset=${offset}`,
+    );
+    setQuestions(items);
+    setQTotal(total);
+    setQOffset(offset);
+  }
   const [matrices, setMatrices] = useState<Matrix[]>([]);
   const [err, setErr] = useState("");
 
@@ -371,7 +384,7 @@ export default function QuestionsPage() {
         setClos([]);
         setAssessments([]);
       }
-      setQuestions(await api(`/api/courses/${id}/questions`));
+      await loadQuestions(0);
       setStats(await api(`/api/courses/${id}/questions/stats`));
       setMatrices(await api(`/api/courses/${id}/matrices`));
       // Gom các chương giáo trình gắn theo từng CLO (để hiển thị nguồn ngữ liệu).
@@ -954,9 +967,30 @@ export default function QuestionsPage() {
       <section>
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-lg font-semibold">
-            Danh sách câu hỏi ({questions.length})
+            Danh sách câu hỏi{" "}
+            <span className="text-sm font-normal text-slate-500">
+              ({qTotal > 0 ? `${qOffset + 1}–${qOffset + questions.length} / ${qTotal}` : questions.length})
+            </span>
           </h2>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {qTotal > Q_PAGE_SIZE && (
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => loadQuestions(Math.max(0, qOffset - Q_PAGE_SIZE))}
+                  disabled={qOffset === 0}
+                  className="rounded border px-2 py-1 text-sm disabled:opacity-40"
+                >
+                  ‹ Trước
+                </button>
+                <button
+                  onClick={() => loadQuestions(qOffset + Q_PAGE_SIZE)}
+                  disabled={qOffset + Q_PAGE_SIZE >= qTotal}
+                  className="rounded border px-2 py-1 text-sm disabled:opacity-40"
+                >
+                  Sau ›
+                </button>
+              </div>
+            )}
             <button
               onClick={reviewQuestionBank}
               disabled={qbReviewBusy}

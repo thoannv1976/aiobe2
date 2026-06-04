@@ -45,6 +45,19 @@ export async function api(path: string, opts: RequestInit = {}) {
   return handle(res);
 }
 
+// GET có phân trang: trả {items, total} (đọc tổng từ header X-Total-Count).
+export async function apiPaged<T = any>(
+  path: string,
+): Promise<{ items: T[]; total: number }> {
+  const token = getToken();
+  const headers: Record<string, string> = {};
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const res = await fetch(`${API_BASE}${path}`, { headers });
+  const items = await handle(res);
+  const total = Number(res.headers.get("X-Total-Count") ?? (Array.isArray(items) ? items.length : 0));
+  return { items, total };
+}
+
 // Upload multipart/form-data: KHÔNG set Content-Type để browser tự thêm boundary.
 export async function apiUpload(path: string, formData: FormData) {
   const token = getToken();

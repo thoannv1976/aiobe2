@@ -12,6 +12,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -51,7 +52,7 @@ class Assignment(Base):
     __tablename__ = "assignments"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     program_id: Mapped[int | None] = mapped_column(ForeignKey("programs.id"), nullable=True)
     course_id: Mapped[int | None] = mapped_column(ForeignKey("courses.id"), nullable=True)
     role: Mapped[str] = mapped_column(String(50))
@@ -87,7 +88,7 @@ class Plo(Base):
     __tablename__ = "plos"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    program_id: Mapped[int] = mapped_column(ForeignKey("programs.id", ondelete="CASCADE"))
+    program_id: Mapped[int] = mapped_column(ForeignKey("programs.id", ondelete="CASCADE"), index=True)
     code: Mapped[str] = mapped_column(String(50))
     description: Mapped[str] = mapped_column(Text)
     category: Mapped[str | None] = mapped_column(String(50), nullable=True)
@@ -101,7 +102,7 @@ class Pi(Base):
     __tablename__ = "pis"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    plo_id: Mapped[int] = mapped_column(ForeignKey("plos.id", ondelete="CASCADE"))
+    plo_id: Mapped[int] = mapped_column(ForeignKey("plos.id", ondelete="CASCADE"), index=True)
     code: Mapped[str] = mapped_column(String(50))
     description: Mapped[str] = mapped_column(Text)
 
@@ -112,7 +113,7 @@ class Course(Base):
     __tablename__ = "courses"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    program_id: Mapped[int] = mapped_column(ForeignKey("programs.id", ondelete="CASCADE"))
+    program_id: Mapped[int] = mapped_column(ForeignKey("programs.id", ondelete="CASCADE"), index=True)
     code: Mapped[str] = mapped_column(String(100), index=True)
     name: Mapped[str] = mapped_column(String(500))
     credits: Mapped[int] = mapped_column(Integer, default=3)
@@ -152,7 +153,7 @@ class CourseOutline(Base):
     __tablename__ = "course_outlines"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    course_id: Mapped[int] = mapped_column(ForeignKey("courses.id", ondelete="CASCADE"))
+    course_id: Mapped[int] = mapped_column(ForeignKey("courses.id", ondelete="CASCADE"), index=True)
     version: Mapped[int] = mapped_column(Integer, default=1)
     status: Mapped[str] = mapped_column(String(50), default="draft")
     general_info_json: Mapped[dict] = mapped_column(JSON, default=dict)
@@ -177,7 +178,7 @@ class Clo(Base):
     __tablename__ = "clos"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    outline_id: Mapped[int] = mapped_column(ForeignKey("course_outlines.id", ondelete="CASCADE"))
+    outline_id: Mapped[int] = mapped_column(ForeignKey("course_outlines.id", ondelete="CASCADE"), index=True)
     code: Mapped[str] = mapped_column(String(50))
     description: Mapped[str] = mapped_column(Text)
     description_en: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -206,7 +207,7 @@ class Assessment(Base):
     __tablename__ = "assessments"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    outline_id: Mapped[int] = mapped_column(ForeignKey("course_outlines.id", ondelete="CASCADE"))
+    outline_id: Mapped[int] = mapped_column(ForeignKey("course_outlines.id", ondelete="CASCADE"), index=True)
     name: Mapped[str] = mapped_column(String(255))
     type: Mapped[str | None] = mapped_column(String(100), nullable=True)
     weight_percent: Mapped[float] = mapped_column(Float, default=0)
@@ -235,7 +236,7 @@ class LessonPlan(Base):
     __tablename__ = "lesson_plans"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    outline_id: Mapped[int] = mapped_column(ForeignKey("course_outlines.id", ondelete="CASCADE"))
+    outline_id: Mapped[int] = mapped_column(ForeignKey("course_outlines.id", ondelete="CASCADE"), index=True)
     week: Mapped[int] = mapped_column(Integer, default=1)
     topic: Mapped[str] = mapped_column(String(500))
     activities_json: Mapped[dict] = mapped_column(JSON, default=dict)
@@ -266,7 +267,7 @@ class Textbook(Base):
     __tablename__ = "textbooks"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    course_id: Mapped[int] = mapped_column(ForeignKey("courses.id", ondelete="CASCADE"))
+    course_id: Mapped[int] = mapped_column(ForeignKey("courses.id", ondelete="CASCADE"), index=True)
     title: Mapped[str] = mapped_column(String(500))
     version: Mapped[int] = mapped_column(Integer, default=1)
     status: Mapped[str] = mapped_column(String(50), default="draft")
@@ -281,7 +282,7 @@ class Chapter(Base):
     __tablename__ = "chapters"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    textbook_id: Mapped[int] = mapped_column(ForeignKey("textbooks.id", ondelete="CASCADE"))
+    textbook_id: Mapped[int] = mapped_column(ForeignKey("textbooks.id", ondelete="CASCADE"), index=True)
     order: Mapped[int] = mapped_column(Integer, default=1)
     title: Mapped[str] = mapped_column(String(500))
     content_richtext: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -298,7 +299,7 @@ class ChapterClo(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     chapter_id: Mapped[int] = mapped_column(ForeignKey("chapters.id", ondelete="CASCADE"))
-    clo_id: Mapped[int] = mapped_column(ForeignKey("clos.id", ondelete="CASCADE"))
+    clo_id: Mapped[int] = mapped_column(ForeignKey("clos.id", ondelete="CASCADE"), index=True)
 
     chapter: Mapped[Chapter] = relationship(back_populates="chapter_clos")
 
@@ -308,10 +309,14 @@ class ChapterClo(Base):
 # ---------------------------------------------------------------------------
 class Question(Base):
     __tablename__ = "questions"
+    __table_args__ = (
+        Index("ix_questions_course_review", "course_id", "review_status"),
+        Index("ix_questions_course_deleted", "course_id", "is_deleted"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    course_id: Mapped[int] = mapped_column(ForeignKey("courses.id", ondelete="CASCADE"))
-    clo_id: Mapped[int | None] = mapped_column(ForeignKey("clos.id"), nullable=True)
+    course_id: Mapped[int] = mapped_column(ForeignKey("courses.id", ondelete="CASCADE"), index=True)
+    clo_id: Mapped[int | None] = mapped_column(ForeignKey("clos.id"), nullable=True, index=True)
     bloom_level: Mapped[str] = mapped_column(String(50))
     difficulty: Mapped[str] = mapped_column(String(50))
     type: Mapped[str] = mapped_column(String(50))
@@ -326,7 +331,7 @@ class Question(Base):
     learning_resource: Mapped[str | None] = mapped_column(String(1000), nullable=True)  # nguồn học liệu
     rubric_json: Mapped[dict] = mapped_column(JSON, default=dict)  # rubric chấm (tự luận/bài tập)
     # Quy trình thẩm định: draft|review|approved|revise|retired
-    review_status: Mapped[str] = mapped_column(String(50), default="draft")
+    review_status: Mapped[str] = mapped_column(String(50), default="draft", index=True)
     reviewed_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     review_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -338,7 +343,7 @@ class ExamMatrix(Base):
     __tablename__ = "exam_matrices"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    course_id: Mapped[int] = mapped_column(ForeignKey("courses.id", ondelete="CASCADE"))
+    course_id: Mapped[int] = mapped_column(ForeignKey("courses.id", ondelete="CASCADE"), index=True)
     name: Mapped[str] = mapped_column(String(255))
     # cells: [{clo_id, bloom_level, difficulty, count, points_each}]
     cells_json: Mapped[list] = mapped_column(JSON, default=list)
@@ -360,8 +365,8 @@ class Exam(Base):
     __tablename__ = "exams"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    course_id: Mapped[int] = mapped_column(ForeignKey("courses.id", ondelete="CASCADE"))
-    matrix_id: Mapped[int | None] = mapped_column(ForeignKey("exam_matrices.id"), nullable=True)
+    course_id: Mapped[int] = mapped_column(ForeignKey("courses.id", ondelete="CASCADE"), index=True)
+    matrix_id: Mapped[int | None] = mapped_column(ForeignKey("exam_matrices.id"), nullable=True, index=True)
     name: Mapped[str] = mapped_column(String(255), default="Đề thi")
     version: Mapped[int] = mapped_column(Integer, default=1)
     status: Mapped[str] = mapped_column(String(50), default="draft")
@@ -380,8 +385,8 @@ class ExamQuestion(Base):
     __tablename__ = "exam_question"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    exam_id: Mapped[int] = mapped_column(ForeignKey("exams.id", ondelete="CASCADE"))
-    question_id: Mapped[int] = mapped_column(ForeignKey("questions.id"))
+    exam_id: Mapped[int] = mapped_column(ForeignKey("exams.id", ondelete="CASCADE"), index=True)
+    question_id: Mapped[int] = mapped_column(ForeignKey("questions.id"), index=True)
     order: Mapped[int] = mapped_column(Integer, default=1)
     variant: Mapped[int] = mapped_column(Integer, default=1)
     locked: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -397,7 +402,7 @@ class Document(Base):
     __tablename__ = "documents"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    type: Mapped[str] = mapped_column(String(100))
+    type: Mapped[str] = mapped_column(String(100), index=True)
     file_path: Mapped[str] = mapped_column(String(1000))
     mime: Mapped[str | None] = mapped_column(String(255), nullable=True)
     uploaded_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
@@ -411,7 +416,7 @@ class Extraction(Base):
     __tablename__ = "extractions"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    document_id: Mapped[int] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"))
+    document_id: Mapped[int] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"), index=True)
     payload_json: Mapped[dict] = mapped_column(JSON, default=dict)
     status: Mapped[str] = mapped_column(String(50), default="pending")  # pending|confirmed
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
@@ -421,8 +426,8 @@ class AuditLog(Base):
     __tablename__ = "audit_logs"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
-    entity: Mapped[str] = mapped_column(String(100))
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    entity: Mapped[str] = mapped_column(String(100), index=True)
     entity_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     action: Mapped[str] = mapped_column(String(100))
     diff_json: Mapped[dict] = mapped_column(JSON, default=dict)
@@ -452,7 +457,7 @@ class Lecture(Base):
     __tablename__ = "lectures"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    course_id: Mapped[int] = mapped_column(ForeignKey("courses.id", ondelete="CASCADE"))
+    course_id: Mapped[int] = mapped_column(ForeignKey("courses.id", ondelete="CASCADE"), index=True)
     session_no: Mapped[int] = mapped_column(Integer, default=1)  # buổi học
     title: Mapped[str] = mapped_column(String(500))
     content_richtext: Mapped[str | None] = mapped_column(Text, nullable=True)  # nội dung bài giảng

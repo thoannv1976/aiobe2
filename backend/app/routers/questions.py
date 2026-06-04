@@ -1,12 +1,13 @@
 import csv
 import io
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Response, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.deps import get_current_user, require_roles
+from app.core.pagination import limit_param, offset_param, paginate
 from app.database import get_db
 from app.models import (
     Chapter,
@@ -39,16 +40,22 @@ LECTURER = require_roles(Role.LECTURER, Role.PROGRAM_MANAGER)
 @router.get("/courses/{course_id}/questions", response_model=list[QuestionOut])
 def list_questions(
     course_id: int,
+    response: Response,
     clo_id: int | None = None,
     bloom_level: str | None = None,
     difficulty: str | None = None,
     type: str | None = None,
     review_status: str | None = None,
     q: str | None = None,  # tìm theo nội dung
+    limit: int = limit_param(),
+    offset: int = offset_param(),
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    """Liệt kê câu hỏi, hỗ trợ lọc theo CLO/Bloom/độ khó/dạng/trạng thái + tìm nội dung."""
+    """Liệt kê câu hỏi (có phân trang), lọc theo CLO/Bloom/độ khó/dạng/trạng thái + tìm nội dung.
+
+    Phân trang: tham số limit/offset; tổng số ở header X-Total-Count.
+    """
     query = db.query(Question).filter(
         Question.course_id == course_id, Question.is_deleted == False  # noqa: E712
     )
@@ -64,7 +71,8 @@ def list_questions(
         query = query.filter(Question.review_status == review_status)
     if q:
         query = query.filter(Question.content.ilike(f"%{q}%"))
-    return query.all()
+    query = query.order_by(Question.id.desc())
+    return paginate(query, response, limit, offset)
 
 
 @router.post("/courses/{course_id}/questions", response_model=QuestionOut, status_code=201)
