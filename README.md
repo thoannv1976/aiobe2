@@ -1,7 +1,8 @@
 # Hệ thống Quản lý OBE / AUN-QA
 
-> **Phiên bản hiện tại: v1.0.0** (2026-06-02) — xem [`CHANGELOG.md`](CHANGELOG.md).
-> Quy mô: 14 màn hình · 112 API endpoint · 26 bảng dữ liệu · 8 migration · 27 test.
+> **Phiên bản hiện tại: v1.2.0** (2026-06-05) — xem [`CHANGELOG.md`](CHANGELOG.md).
+> Quy mô: 14 màn hình · 125 API endpoint · 26 bảng dữ liệu · 9 migration · 49 test.
+> Mới ở v1.1–v1.2: import đề cương đã có + đánh giá/nâng cấp AI toàn chuỗi; tối ưu chịu tải (index, phân trang, pool DB).
 
 Web app quản lý chuỗi sản phẩm học thuật theo chuẩn **OBE (Outcome-Based Education)** và kiểm định **AUN-QA**:
 
