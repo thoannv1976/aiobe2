@@ -452,6 +452,54 @@ class ApiKey(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
 
 
+class LlmUsage(Base):
+    """Ghi nhận lượng token & chi phí ước tính của mỗi lời gọi LLM (kiểm soát chi phí/hạn mức)."""
+    __tablename__ = "llm_usage"
+    __table_args__ = (
+        Index("ix_llm_usage_program_created", "program_id", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    provider: Mapped[str] = mapped_column(String(50))
+    model: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    prompt_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    completion_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    total_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    est_cost_usd: Mapped[float] = mapped_column(Float, default=0)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    program_id: Mapped[int | None] = mapped_column(ForeignKey("programs.id"), nullable=True, index=True)
+    course_id: Mapped[int | None] = mapped_column(ForeignKey("courses.id"), nullable=True)
+    job_id: Mapped[int | None] = mapped_column(ForeignKey("jobs.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, index=True)
+
+
+class Job(Base):
+    """Tác vụ AI nặng chạy nền (sinh giáo trình, import hàng loạt...). Request chỉ 'đặt việc'.
+
+    status: pending | running | done | error. progress: 0..100. result_json/error chứa kết quả.
+    """
+    __tablename__ = "jobs"
+    __table_args__ = (
+        Index("ix_jobs_program_status", "program_id", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    type: Mapped[str] = mapped_column(String(100), index=True)
+    status: Mapped[str] = mapped_column(String(50), default="pending", index=True)
+    progress: Mapped[int] = mapped_column(Integer, default=0)      # 0..100
+    total: Mapped[int] = mapped_column(Integer, default=0)         # số đơn vị việc
+    done: Mapped[int] = mapped_column(Integer, default=0)          # đã xong
+    message: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    params_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    result_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    program_id: Mapped[int | None] = mapped_column(ForeignKey("programs.id"), nullable=True)
+    course_id: Mapped[int | None] = mapped_column(ForeignKey("courses.id"), nullable=True)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
+
+
 class Lecture(Base):
     """Bài giảng theo buổi, gắn học phần (SPEC mục 10). Nội dung Markdown do AI/giảng viên soạn."""
     __tablename__ = "lectures"

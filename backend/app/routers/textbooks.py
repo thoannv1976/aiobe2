@@ -141,6 +141,39 @@ class GenTextbookIn(BaseModel):
     with_content: bool = True  # sinh luôn nội dung từng chương hay chỉ dàn ý
 
 
+class GenTextbookAsyncIn(GenTextbookIn):
+    deep: bool = False          # chương dài 25–40 trang
+    target_pages: int = 30
+
+
+@router.post("/courses/{course_id}/textbooks/generate-async", status_code=202)
+def generate_textbook_async(
+    course_id: int, payload: GenTextbookAsyncIn,
+    db: Session = Depends(get_db), user: User = Depends(LECTURER),
+):
+    """Đặt việc sinh CẢ giáo trình bằng AI chạy NỀN (tránh timeout với nhiều chương).
+
+    Trả về job_id; frontend poll GET /api/jobs/{job_id} để xem tiến độ.
+    """
+    course = db.get(Course, course_id)
+    if not course:
+        raise HTTPException(404, "Không tìm thấy học phần")
+    if not _course_clos(db, course_id):
+        raise HTTPException(400, "Học phần chưa có đề cương/CLO. Hãy tạo đề cương trước.")
+    from app.services.jobs import create_job, enqueue
+
+    job = create_job(
+        db, "generate_textbook",
+        params={"course_id": course_id, "title": payload.title, "num_chapters": payload.num_chapters,
+                "with_content": payload.with_content, "deep": payload.deep,
+                "target_pages": payload.target_pages},
+        user_id=user.id, program_id=course.program_id, course_id=course_id,
+    )
+    log_action(db, user.id, "job", job.id, "create", {"type": "generate_textbook"})
+    enqueue(job.id)
+    return {"job_id": job.id, "status": job.status}
+
+
 @router.post("/courses/{course_id}/textbooks/generate")
 def generate_textbook(
     course_id: int, payload: GenTextbookIn, db: Session = Depends(get_db), user: User = Depends(LECTURER)

@@ -1,10 +1,6 @@
-import os
-import uuid
-
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
-from app.config import settings
 from app.core.deps import get_current_user, require_roles
 from app.database import get_db
 from app.models import (
@@ -21,6 +17,7 @@ from app.models import (
 from app.schemas.extraction import ExtractionPayload
 from app.services.audit import log_action
 from app.services.extraction import call_llm_extract, extract_text_from_file
+from app.services.storage import local_path, put_file
 
 router = APIRouter(prefix="/api", tags=["extraction"])
 MANAGER = require_roles(Role.PROGRAM_MANAGER, Role.LECTURER)
@@ -46,14 +43,12 @@ async def upload_document(
     """
     if doc_type not in DOC_TYPES:
         doc_type = "program_proposal"
-    os.makedirs(settings.storage_dir, exist_ok=True)
-    ext = os.path.splitext(file.filename or "")[1]
-    saved = os.path.join(settings.storage_dir, f"{uuid.uuid4().hex}{ext}")
-    with open(saved, "wb") as f:
-        f.write(await file.read())
+    data = await file.read()
+    saved = put_file(data, file.filename or "")
     text = ""
     try:
-        text = extract_text_from_file(saved, file.content_type)
+        with local_path(saved) as p:
+            text = extract_text_from_file(p, file.content_type)
     except Exception as e:  # noqa: BLE001
         text = f"[Không trích được văn bản: {e}]"
     doc = Document(

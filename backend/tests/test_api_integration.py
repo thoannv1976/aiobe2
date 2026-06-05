@@ -62,6 +62,107 @@ def test_requires_auth(client):
     assert client.get("/api/programs").status_code == 401
 
 
+def test_llm_retry_and_usage(client, monkeypatch):
+    """LLM: thử lại khi lỗi tạm thời + ghi nhận token/chi phí (LlmUsage)."""
+    from app.database import SessionLocal
+    from app.models import LlmUsage
+    from app.services import llm as llm_mod
+
+    monkeypatch.setattr(llm_mod.settings, "llm_retry_base_delay", 0.0)
+    monkeypatch.setattr(llm_mod.settings, "llm_max_retries", 3)
+    monkeypatch.setattr(llm_mod, "_resolve", lambda: ("anthropic", "k", "claude-opus-4-8"))
+
+    class RateLimitError(Exception):
+        pass
+
+    calls = {"n": 0}
+
+    def flaky(provider, api_key, model, system, user, max_tokens):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise RateLimitError("429 rate limit, please retry")
+        return "KETQUA", {"prompt": 100, "completion": 20, "total": 120}
+
+    monkeypatch.setattr(llm_mod, "_raw_complete", flaky)
+    db = SessionLocal()
+    before = db.query(LlmUsage).count()
+    db.close()
+
+    out = llm_mod.llm_complete("sys", "usr")
+    assert out == "KETQUA"
+    assert calls["n"] == 3  # 2 lần lỗi + 1 lần thành công
+
+    db = SessionLocal()
+    assert db.query(LlmUsage).count() == before + 1
+    last = db.query(LlmUsage).order_by(LlmUsage.id.desc()).first()
+    assert last.total_tokens == 120 and last.est_cost_usd > 0
+    db.close()
+
+
+def test_llm_quota_blocks(client, monkeypatch):
+    """Vượt hạn mức token/ngày của chương trình → chặn (LLMQuotaExceeded)."""
+    from app.core.llm_context import llm_scope
+    from app.database import SessionLocal
+    from app.models import LlmUsage
+    from app.services import llm as llm_mod
+
+    h = {"Authorization": f"Bearer {_token(client)}"}
+    pid = client.post("/api/programs", json={"name": "PQuota", "code": "PQ9"}, headers=h).json()["id"]
+    monkeypatch.setattr(llm_mod.settings, "llm_daily_token_quota_per_program", 50)
+    monkeypatch.setattr(llm_mod, "_resolve", lambda: ("anthropic", "k", "claude-opus-4-8"))
+    monkeypatch.setattr(llm_mod, "_raw_complete",
+                        lambda *a, **k: ("x", {"prompt": 1, "completion": 1, "total": 2}))
+
+    db = SessionLocal()
+    db.add(LlmUsage(provider="anthropic", model="m", total_tokens=60, program_id=pid))
+    db.commit()
+    db.close()
+
+    import pytest
+    with llm_scope(program_id=pid):
+        with pytest.raises(llm_mod.LLMQuotaExceeded):
+            llm_mod.llm_complete("s", "u")
+
+
+def test_generate_textbook_job_inline(client, monkeypatch):
+    """Job sinh giáo trình chạy nền (inline): đặt việc → poll job → done + giáo trình tạo ra."""
+    import json as _json
+
+    from app.config import settings as app_settings
+    from app.services import textbook_ai
+
+    monkeypatch.setattr(app_settings, "jobs_inline", True)  # chạy đồng bộ để test xác định
+
+    def fake_tb_llm(system, user, max_tokens=4000):
+        if "CẤU TRÚC CHƯƠNG" in system:
+            return _json.dumps({"chapters": [
+                {"order": 1, "title": "Chương 1", "clo_codes": ["CLO1"], "summary": "x"},
+                {"order": 2, "title": "Chương 2", "clo_codes": ["CLO1"], "summary": "y"},
+            ]}, ensure_ascii=False)
+        return "## Nội dung\nChi tiết chương."
+
+    monkeypatch.setattr(textbook_ai, "llm_complete", fake_tb_llm)
+
+    h = {"Authorization": f"Bearer {_token(client)}"}
+    pid = client.post("/api/programs", json={"name": "PTB", "code": "PTB"}, headers=h).json()["id"]
+    cid = client.post(f"/api/programs/{pid}/courses",
+                      json={"code": "CTB", "name": "Course TB"}, headers=h).json()["id"]
+    oid = client.post("/api/outlines", json={"course_id": cid}, headers=h).json()["id"]
+    client.post(f"/api/outlines/{oid}/clos",
+                json={"code": "CLO1", "description": "x", "bloom_level": "understand"}, headers=h)
+
+    r = client.post(f"/api/courses/{cid}/textbooks/generate-async",
+                    json={"with_content": True}, headers=h)
+    assert r.status_code == 202, r.text
+    jid = r.json()["job_id"]
+
+    j = client.get(f"/api/jobs/{jid}", headers=h).json()
+    assert j["status"] == "done", j
+    assert j["progress"] == 100 and j["result"]["chapters"] == 2
+    tbs = client.get(f"/api/courses/{cid}/textbooks", headers=h).json()
+    assert len(tbs) == 1
+
+
 def test_improve_outline_endpoint(client, monkeypatch):
     """Nâng cấp đề cương bằng AI tạo phiên bản mới (draft) từ kết quả kiểm tra chất lượng."""
     import json as _json

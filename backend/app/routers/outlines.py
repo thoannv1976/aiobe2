@@ -1,13 +1,10 @@
-import os
-import uuid
-
 from fastapi import APIRouter, Depends, HTTPException, Response, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.config import settings
 from app.core.deps import get_current_user, require_roles
+from app.core.llm_context import llm_scope
 from app.core.pagination import limit_param, offset_param, paginate
 from app.database import get_db
 from app.models import (
@@ -51,6 +48,7 @@ from app.services.outline_ai import (
     improve_outline_ai,
     parse_outline_from_text,
 )
+from app.services.storage import local_path, put_file
 
 router = APIRouter(prefix="/api", tags=["outline"])
 
@@ -156,22 +154,23 @@ def generate_outline(
         return d.extracted_text or "" if d else ""
 
     try:
-        gen = generate_outline_ai(
-            course={
-                "code": course.code, "name": course.name, "credits": course.credits,
-                "semester": course.semester, "type": course.type,
-                "program_name": program.name if program else "",
-            },
-            plos=[{"code": p.code, "category": p.category or "", "description": p.description} for p in plos],
-            pis=[{"code": pi.code, "plo_code": plo_code_by_id.get(pi.plo_id, ""), "description": pi.description} for pi in pis],
-            course_plo=course_plo,
-            template_text=_doc_text(template_doc_id),
-            aunqa_text=_doc_text(aunqa_doc_id),
-            num_clos=num_clos,
-            num_weeks=num_weeks,
-            assessment_scheme=assessment_scheme,
-            bilingual=bilingual,
-        )
+        with llm_scope(user_id=user.id, program_id=course.program_id, course_id=course_id):
+            gen = generate_outline_ai(
+                course={
+                    "code": course.code, "name": course.name, "credits": course.credits,
+                    "semester": course.semester, "type": course.type,
+                    "program_name": program.name if program else "",
+                },
+                plos=[{"code": p.code, "category": p.category or "", "description": p.description} for p in plos],
+                pis=[{"code": pi.code, "plo_code": plo_code_by_id.get(pi.plo_id, ""), "description": pi.description} for pi in pis],
+                course_plo=course_plo,
+                template_text=_doc_text(template_doc_id),
+                aunqa_text=_doc_text(aunqa_doc_id),
+                num_clos=num_clos,
+                num_weeks=num_weeks,
+                assessment_scheme=assessment_scheme,
+                bilingual=bilingual,
+            )
     except Exception as e:  # noqa: BLE001
         raise HTTPException(400, f"Sinh đề cương thất bại: {e}")
 
@@ -667,13 +666,11 @@ async def parse_outline_upload(
     course = db.get(Course, course_id)
     if not course:
         raise HTTPException(404, "Không tìm thấy học phần")
-    os.makedirs(settings.storage_dir, exist_ok=True)
-    ext = os.path.splitext(file.filename or "")[1]
-    saved = os.path.join(settings.storage_dir, f"{uuid.uuid4().hex}{ext}")
-    with open(saved, "wb") as f:
-        f.write(await file.read())
+    data = await file.read()
+    saved = put_file(data, file.filename or "")
     try:
-        text = extract_text_from_file(saved, file.content_type)
+        with local_path(saved) as p:
+            text = extract_text_from_file(p, file.content_type)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(400, f"Không đọc được nội dung file: {e}")
     doc = Document(
@@ -877,7 +874,6 @@ async def parse_outlines_upload(
         raise HTTPException(400, "Chưa chọn file nào.")
     by_code = {c.code.upper(): c for c in courses}
     plo_dicts, pi_dicts, plo_codes, _ = _program_plo_context(db, program_id)
-    os.makedirs(settings.storage_dir, exist_ok=True)
 
     rows = []
     for file in files:
@@ -885,11 +881,9 @@ async def parse_outlines_upload(
                "suggested_course_id": None, "suggested_course_code": None,
                "clos_count": 0, "unmatched_plos": [], "outline": None, "error": None}
         try:
-            ext = os.path.splitext(file.filename or "")[1]
-            saved = os.path.join(settings.storage_dir, f"{uuid.uuid4().hex}{ext}")
-            with open(saved, "wb") as f:
-                f.write(await file.read())
-            text = extract_text_from_file(saved, file.content_type)
+            saved = put_file(await file.read(), file.filename or "")
+            with local_path(saved) as p:
+                text = extract_text_from_file(p, file.content_type)
             if not (text or "").strip():
                 row["error"] = "Không đọc được nội dung file (rỗng/scan không OCR được)."
                 rows.append(row); continue

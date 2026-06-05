@@ -20,8 +20,25 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-opus-4-8"
 
+    # Kiểm soát gọi LLM (chịu tải/chi phí)
+    llm_max_retries: int = 4          # số lần thử lại khi lỗi tạm thời (429/quá tải/timeout)
+    llm_retry_base_delay: float = 1.0 # giây, backoff lũy thừa: 1,2,4,8...
+    llm_max_concurrency: int = 4      # số request LLM đồng thời tối đa mỗi instance
+    # Hạn mức token/ngày cho mỗi chương trình (0 = không giới hạn). Chặn khi vượt.
+    llm_daily_token_quota_per_program: int = 0
+
+    # Tác vụ nền (job)
+    jobs_inline: bool = False        # True: chạy job ngay trong tiến trình (dev/test/single-instance)
+    cloud_tasks_queue: str = ""      # projects/.../locations/.../queues/... (bật Cloud Tasks)
+    worker_base_url: str = ""        # URL công khai của service để Cloud Tasks gọi lại
+    job_worker_token: str = ""       # secret xác thực khi Cloud Tasks gọi /jobs/{id}/run
+
     # Storage
     storage_dir: str = "./storage"
+    # Lưu file lên GCS khi đặt gcs_bucket (bắt buộc cho Cloud Run đa-instance);
+    # để trống → lưu cục bộ (dev/test).
+    gcs_bucket: str = ""
+    gcs_prefix: str = "uploads/"
 
     cors_origins: str = "http://localhost:3000"
 

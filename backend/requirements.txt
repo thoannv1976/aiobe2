@@ -21,5 +21,9 @@ fpdf2==2.8.7
 openai==1.59.6
 python-pptx==1.0.2
 # (Tùy chọn) Cloud SQL Python Connector — chỉ cần khi đặt INSTANCE_CONNECTION_NAME.
-# Bật bằng cách cài thêm: pip install "cloud-sql-python-connector[pg8000]"
-# (để mặc định comment để không ảnh hưởng deploy dùng unix socket /cloudsql/...)
+#   pip install "cloud-sql-python-connector[pg8000]"
+# (Tùy chọn) Lưu file lên GCS (Nhóm B #4) — chỉ cần khi đặt GCS_BUCKET.
+#   pip install google-cloud-storage
+# (Tùy chọn) Job nền qua Cloud Tasks (Nhóm B #5) — chỉ cần khi đặt CLOUD_TASKS_QUEUE.
+#   pip install google-cloud-tasks
+# Mặc định để comment để không ảnh hưởng deploy hiện tại (local fallback vẫn chạy được).

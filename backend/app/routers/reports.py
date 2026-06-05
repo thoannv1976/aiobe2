@@ -1,5 +1,6 @@
 import io
 import json
+import os
 import zipfile
 
 from fastapi import APIRouter, Depends, HTTPException, Response
@@ -92,6 +93,15 @@ def evidence_package(program_id: int, db: Session = Depends(get_db), _: User = D
             doc = db.get(Document, prog.source_document_id)
             if doc and doc.extracted_text:
                 z.writestr("source_document.txt", doc.extracted_text)
+            # Kèm cả file gốc (đề án) làm minh chứng, lấy qua lớp lưu trữ (local/GCS).
+            if doc and doc.file_path:
+                try:
+                    from app.services.storage import get_bytes
+
+                    ext = os.path.splitext(doc.original_name or doc.file_path)[1] or ".bin"
+                    z.writestr(f"source_document{ext}", get_bytes(doc.file_path))
+                except Exception:  # noqa: BLE001
+                    pass  # file gốc có thể đã bị dọn; vẫn còn extracted_text
     buf.seek(0)
     return StreamingResponse(
         buf,

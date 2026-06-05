@@ -42,6 +42,41 @@ export default function TextbooksPage() {
   const [genMsg, setGenMsg] = useState("");
   const [genNumChapters, setGenNumChapters] = useState<number>(0);
   const [deepPages, setDeepPages] = useState<number>(30);
+  const [job, setJob] = useState<any>(null);
+
+  // Đặt việc sinh cả giáo trình cho server chạy nền, rồi poll tiến độ.
+  async function generateTextbookJob() {
+    setErr("");
+    setGenMsg("");
+    try {
+      const r = await api(`/api/courses/${id}/textbooks/generate-async`, {
+        method: "POST",
+        body: JSON.stringify({
+          title: newTitle.trim(),
+          num_chapters: genNumChapters,
+          with_content: true,
+          deep: true,
+          target_pages: deepPages,
+        }),
+      });
+      setNewTitle("");
+      const jid = r.job_id;
+      setJob({ id: jid, status: "running", progress: 0, message: "Đã tiếp nhận..." });
+      // Poll mỗi 2.5s cho tới khi xong/ lỗi.
+      while (true) {
+        await new Promise((res) => setTimeout(res, 2500));
+        const j = await api(`/api/jobs/${jid}`);
+        setJob(j);
+        if (j.status === "done" || j.status === "error") {
+          if (j.status === "done") await loadTextbooks();
+          break;
+        }
+      }
+    } catch (e: any) {
+      setErr(e.message);
+      setJob(null);
+    }
+  }
   const [chapterBusy, setChapterBusy] = useState<number | null>(null);
   const [expandedChapter, setExpandedChapter] = useState<number | null>(null);
   // Đánh giá + nâng cấp chương bằng AI
@@ -443,8 +478,37 @@ export default function TextbooksPage() {
             >
               Chỉ tạo dàn ý chương
             </button>
+            <button
+              onClick={generateTextbookJob}
+              disabled={genBusy || !!job}
+              className="rounded bg-indigo-600 px-4 py-2 text-sm text-white disabled:opacity-50"
+              title="Đặt việc sinh cả giáo trình cho server xử lý nền — không lo timeout, có thể rời trang"
+            >
+              ⚙ Sinh nền (server)
+            </button>
           </div>
           {genMsg && <p className="mt-2 text-sm text-green-700">{genMsg}</p>}
+
+          {/* Thanh tiến độ job nền */}
+          {job && (
+            <div className="mt-3 rounded border border-indigo-200 bg-indigo-50 p-3 text-sm">
+              <div className="mb-1 flex items-center justify-between">
+                <b>Sinh giáo trình (nền) — {
+                  job.status === "done" ? "Hoàn tất" :
+                  job.status === "error" ? "Lỗi" : "Đang chạy"}</b>
+                <span className="text-xs text-slate-500">{job.progress}%</span>
+              </div>
+              <div className="h-2 w-full overflow-hidden rounded bg-slate-200">
+                <div className={`h-full ${job.status === "error" ? "bg-red-500" : "bg-indigo-600"}`}
+                     style={{ width: `${job.progress}%` }} />
+              </div>
+              {job.message && <p className="mt-1 text-xs text-slate-600">{job.message}</p>}
+              {job.error && <p className="mt-1 text-xs text-red-600">{job.error}</p>}
+              {(job.status === "done" || job.status === "error") && (
+                <button onClick={() => setJob(null)} className="mt-2 rounded bg-slate-100 px-3 py-1 text-xs hover:bg-slate-200">Đóng</button>
+              )}
+            </div>
+          )}
         </div>
       </section>
 

@@ -1,5 +1,20 @@
 # Nhật ký phiên bản — AIOBE / OBE-AUN-QA
 
+## v1.3.0 — 2026-06-05 — Hạ tầng (Nhóm B)
+
+### Hạ tầng quy mô lớn
+- **Lưu file qua lớp trừu tượng (GCS hoặc cục bộ)** — `app/services/storage.py`. Khi đặt `GCS_BUCKET`,
+  file upload (đề án, đề cương gốc, minh chứng) lưu lên **Google Cloud Storage** (bền vững trên Cloud Run
+  đa-instance); không đặt → lưu cục bộ (dev/test). Mọi điểm upload + gói minh chứng đã chuyển sang lớp này.
+- **Tác vụ AI nặng chạy nền (job)** — `app/services/jobs.py` + bảng `jobs`. Request chỉ "đặt việc" và trả
+  `job_id`; frontend **poll tiến độ** (thanh %). Sinh cả giáo trình có endpoint nền
+  `POST /api/courses/{id}/textbooks/generate-async`. Cơ chế chạy: **Cloud Tasks** (khi cấu hình) /
+  thread nền / inline (test) — `GET /api/jobs/{id}`, `POST /api/jobs/{id}/run` (worker).
+- **Kiểm soát LLM (rate-limit/chi phí)**: `llm_complete` nay có **retry/backoff** khi lỗi tạm thời (429/quá
+  tải/timeout), **giới hạn số gọi đồng thời**, **ghi nhận token + chi phí ước tính** (bảng `llm_usage`,
+  theo chương trình/học phần), và **hạn mức token/ngày theo chương trình** (chặn khi vượt). Thống kê:
+  `GET /api/llm-usage` (Admin).
+
 ## v1.2.0 — 2026-06-05 — Chịu tải (Nhóm A)
 
 ### Hiệu năng & quy mô

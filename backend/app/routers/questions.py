@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.deps import get_current_user, require_roles
+from app.core.llm_context import llm_scope
 from app.core.pagination import limit_param, offset_param, paginate
 from app.database import get_db
 from app.models import (
@@ -169,15 +170,16 @@ def generate_questions(
     clo_materials = _gather_clo_materials(db, course_id, clos)
 
     try:
-        gen = generate_questions_ai(
-            course={"code": course.code, "name": course.name},
-            clos=[{"code": c.code, "description": c.description, "bloom_level": c.bloom_level or ""} for c in clos],
-            num_per_clo=payload.num_per_clo,
-            bloom_levels=payload.bloom_levels or None,
-            difficulties=payload.difficulties or None,
-            question_type=payload.question_type,
-            clo_materials=clo_materials,
-        )
+        with llm_scope(user_id=user.id, program_id=course.program_id, course_id=course_id):
+            gen = generate_questions_ai(
+                course={"code": course.code, "name": course.name},
+                clos=[{"code": c.code, "description": c.description, "bloom_level": c.bloom_level or ""} for c in clos],
+                num_per_clo=payload.num_per_clo,
+                bloom_levels=payload.bloom_levels or None,
+                difficulties=payload.difficulties or None,
+                question_type=payload.question_type,
+                clo_materials=clo_materials,
+            )
     except Exception as e:  # noqa: BLE001
         raise HTTPException(400, f"Sinh câu hỏi thất bại: {e}")
 

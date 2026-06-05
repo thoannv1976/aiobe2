@@ -6,21 +6,45 @@ ANTHROPIC_API_KEY (tương thích ngược).
 """
 from __future__ import annotations
 
-from sqlalchemy import select
+import logging
+import threading
+import time
+from datetime import datetime, timezone
+
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.core.llm_context import current_scope
 from app.database import SessionLocal
-from app.models import ApiKey
+from app.models import ApiKey, LlmUsage
 
 DEFAULT_MODELS = {
     "anthropic": "claude-opus-4-8",
     "openai": "gpt-4o",
 }
 
+# Giá tham khảo USD / 1 triệu token (input, output) — để ƯỚC TÍNH chi phí.
+_PRICING = {
+    "opus": (15.0, 75.0),
+    "sonnet": (3.0, 15.0),
+    "haiku": (0.8, 4.0),
+    "gpt-4o-mini": (0.15, 0.6),
+    "gpt-4o": (2.5, 10.0),
+    "gpt-4.1": (2.0, 8.0),
+}
+
+# Giới hạn số lời gọi LLM đồng thời mỗi instance (tránh quá tải/rate limit provider).
+_sem = threading.Semaphore(max(1, settings.llm_max_concurrency))
+_log = logging.getLogger("uvicorn.error")
+
 
 class LLMNotConfigured(RuntimeError):
     """Chưa có API key AI nào được kích hoạt."""
+
+
+class LLMQuotaExceeded(RuntimeError):
+    """Vượt hạn mức token AI (theo chương trình)."""
 
 
 def get_active_key(db: Session | None = None) -> ApiKey | None:
@@ -68,10 +92,16 @@ def _resolve() -> tuple[str, str, str]:
     )
 
 
-def llm_complete(system: str, user: str, max_tokens: int = 4000) -> str:
-    """Gọi LLM (Claude hoặc OpenAI tùy key active), trả về text thuần."""
-    provider, api_key, model = _resolve()
+def _estimate_cost(model: str, prompt: int, completion: int) -> float:
+    m = (model or "").lower()
+    for key, (pin, pout) in _PRICING.items():
+        if key in m:
+            return (prompt * pin + completion * pout) / 1_000_000
+    return 0.0
 
+
+def _raw_complete(provider, api_key, model, system, user, max_tokens) -> tuple[str, dict]:
+    """Gọi provider thật, trả (text, usage={prompt,completion,total})."""
     if provider == "openai":
         import openai
 
@@ -84,9 +114,14 @@ def llm_complete(system: str, user: str, max_tokens: int = 4000) -> str:
                 {"role": "user", "content": user},
             ],
         )
-        return resp.choices[0].message.content or ""
+        u = getattr(resp, "usage", None)
+        usage = {
+            "prompt": getattr(u, "prompt_tokens", 0) or 0,
+            "completion": getattr(u, "completion_tokens", 0) or 0,
+        }
+        usage["total"] = usage["prompt"] + usage["completion"]
+        return (resp.choices[0].message.content or ""), usage
 
-    # mặc định: anthropic
     import anthropic
 
     client = anthropic.Anthropic(api_key=api_key)
@@ -96,7 +131,90 @@ def llm_complete(system: str, user: str, max_tokens: int = 4000) -> str:
         system=system,
         messages=[{"role": "user", "content": user}],
     )
-    return "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
+    u = getattr(msg, "usage", None)
+    usage = {
+        "prompt": getattr(u, "input_tokens", 0) or 0,
+        "completion": getattr(u, "output_tokens", 0) or 0,
+    }
+    usage["total"] = usage["prompt"] + usage["completion"]
+    text = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
+    return text, usage
+
+
+def _is_transient(e: Exception) -> bool:
+    """Lỗi tạm thời nên thử lại: rate limit / quá tải / timeout / lỗi mạng 5xx."""
+    n = type(e).__name__.lower()
+    s = str(e).lower()
+    if any(k in n for k in ("ratelimit", "overloaded", "timeout", "apiconnection", "internalserver", "serviceunavailable")):
+        return True
+    return any(k in s for k in ("rate limit", "429", "overloaded", "timeout", "temporarily", "502", "503", "529"))
+
+
+def _record_usage(provider: str, model: str, usage: dict) -> None:
+    """Ghi LlmUsage theo scope hiện tại (best-effort, không chặn luồng chính)."""
+    scope = current_scope()
+    db = SessionLocal()
+    try:
+        db.add(LlmUsage(
+            provider=provider, model=model,
+            prompt_tokens=usage.get("prompt", 0),
+            completion_tokens=usage.get("completion", 0),
+            total_tokens=usage.get("total", 0),
+            est_cost_usd=_estimate_cost(model, usage.get("prompt", 0), usage.get("completion", 0)),
+            user_id=scope.get("user_id"), program_id=scope.get("program_id"),
+            course_id=scope.get("course_id"), job_id=scope.get("job_id"),
+        ))
+        db.commit()
+    except Exception as e:  # noqa: BLE001
+        db.rollback()
+        _log.warning("Ghi LlmUsage thất bại: %s", e)
+    finally:
+        db.close()
+
+
+def _check_quota() -> None:
+    """Chặn nếu chương trình đã vượt hạn mức token trong ngày (nếu có cấu hình)."""
+    quota = settings.llm_daily_token_quota_per_program
+    scope = current_scope()
+    pid = scope.get("program_id")
+    if not quota or not pid:
+        return
+    start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    db = SessionLocal()
+    try:
+        used = db.query(func.coalesce(func.sum(LlmUsage.total_tokens), 0)).filter(
+            LlmUsage.program_id == pid, LlmUsage.created_at >= start
+        ).scalar() or 0
+        if used >= quota:
+            raise LLMQuotaExceeded(
+                f"Chương trình đã dùng {used:,}/{quota:,} token AI trong ngày. "
+                "Vui lòng thử lại ngày mai hoặc liên hệ quản trị tăng hạn mức."
+            )
+    finally:
+        db.close()
+
+
+def llm_complete(system: str, user: str, max_tokens: int = 4000) -> str:
+    """Gọi LLM có kiểm soát: hạn mức → giới hạn đồng thời → retry/backoff → ghi usage."""
+    provider, api_key, model = _resolve()
+    model = model or DEFAULT_MODELS.get(provider, "")
+    _check_quota()
+
+    last_err: Exception | None = None
+    for attempt in range(settings.llm_max_retries + 1):
+        try:
+            with _sem:
+                text, usage = _raw_complete(provider, api_key, model, system, user, max_tokens)
+            _record_usage(provider, model, usage)
+            return text
+        except Exception as e:  # noqa: BLE001
+            last_err = e
+            if not _is_transient(e) or attempt >= settings.llm_max_retries:
+                raise
+            delay = settings.llm_retry_base_delay * (2 ** attempt)
+            _log.warning("LLM lỗi tạm thời (%s), thử lại sau %.1fs (lần %d)", e, delay, attempt + 1)
+            time.sleep(delay)
+    raise last_err  # type: ignore[misc]
 
 
 def verify_key(provider: str, api_key: str, model: str | None = None) -> tuple[bool, str]:

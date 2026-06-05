@@ -56,6 +56,46 @@ def get_ai_status(db: Session = Depends(get_db), _: User = Depends(get_current_u
     return ai_status(db)
 
 
+# ---- Thống kê dùng AI (token + chi phí ước tính) — Admin ----
+@router.get("/llm-usage")
+def llm_usage(days: int = 30, db: Session = Depends(get_db), _: User = Depends(ADMIN)):
+    """Tổng token + chi phí ước tính trong N ngày, kèm phân rã theo chương trình."""
+    from datetime import datetime, timedelta, timezone
+
+    from sqlalchemy import func
+
+    from app.models import LlmUsage, Program
+
+    since = datetime.now(timezone.utc) - timedelta(days=max(1, days))
+    base = db.query(LlmUsage).filter(LlmUsage.created_at >= since)
+    total_tokens = base.with_entities(func.coalesce(func.sum(LlmUsage.total_tokens), 0)).scalar() or 0
+    total_cost = base.with_entities(func.coalesce(func.sum(LlmUsage.est_cost_usd), 0.0)).scalar() or 0.0
+    calls = base.count()
+
+    rows = (
+        db.query(
+            LlmUsage.program_id,
+            func.coalesce(func.sum(LlmUsage.total_tokens), 0),
+            func.coalesce(func.sum(LlmUsage.est_cost_usd), 0.0),
+            func.count(LlmUsage.id),
+        )
+        .filter(LlmUsage.created_at >= since)
+        .group_by(LlmUsage.program_id)
+        .all()
+    )
+    prog_names = {p.id: p.name for p in db.query(Program).all()}
+    by_program = [
+        {"program_id": pid, "program_name": prog_names.get(pid, "(không gắn)"),
+         "tokens": int(tok), "est_cost_usd": round(float(cost), 4), "calls": int(c)}
+        for pid, tok, cost, c in rows
+    ]
+    by_program.sort(key=lambda x: -x["tokens"])
+    return {
+        "days": days, "calls": calls, "total_tokens": int(total_tokens),
+        "est_cost_usd": round(float(total_cost), 4), "by_program": by_program,
+    }
+
+
 # ---- CRUD: chỉ Admin ----
 @router.get("/api-keys")
 def list_keys(db: Session = Depends(get_db), _: User = Depends(ADMIN)):
