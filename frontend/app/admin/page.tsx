@@ -196,9 +196,14 @@ export default function AdminPage() {
     <div>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-2xl font-bold">Quản trị người dùng &amp; phân công</h1>
-        <a href="/admin/ai" className="rounded bg-indigo-600 px-3 py-2 text-sm text-white">
-          ⚙ Cấu hình API AI
-        </a>
+        <div className="flex flex-wrap gap-2">
+          <a href="/admin/ai" className="rounded bg-indigo-600 px-3 py-2 text-sm text-white">
+            ⚙ Cấu hình API AI
+          </a>
+          <a href="/admin/llm-cost" className="rounded bg-emerald-600 px-3 py-2 text-sm text-white">
+            💰 Chi phí AI
+          </a>
+        </div>
       </div>
 
       {/* Section: Người dùng */}

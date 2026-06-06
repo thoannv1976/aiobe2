@@ -62,6 +62,29 @@ def test_requires_auth(client):
     assert client.get("/api/programs").status_code == 401
 
 
+def test_llm_usage_endpoint(client):
+    """GET /llm-usage: chỉ Admin; trả tổng token/chi phí + phân rã theo chương trình."""
+    from app.core.security import hash_password
+    from app.database import SessionLocal
+    from app.models import User
+
+    db = SessionLocal()
+    if not db.query(User).filter(User.email == "admin2@t.vn").first():
+        db.add(User(name="A2", email="admin2@t.vn", password_hash=hash_password("pw"), role="admin"))
+        db.commit()
+    db.close()
+
+    # Quản lý CTĐT (không phải admin) bị từ chối.
+    mh = {"Authorization": f"Bearer {_token(client)}"}
+    assert client.get("/api/llm-usage", headers=mh).status_code == 403
+
+    tok = client.post("/api/auth/login", data={"username": "admin2@t.vn", "password": "pw"}).json()["access_token"]
+    r = client.get("/api/llm-usage?days=30", headers={"Authorization": f"Bearer {tok}"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert {"days", "calls", "total_tokens", "est_cost_usd", "by_program"} <= set(body)
+
+
 def test_delete_program(client):
     """Xóa CTĐT (soft-delete) → biến mất khỏi danh sách."""
     h = {"Authorization": f"Bearer {_token(client)}"}
