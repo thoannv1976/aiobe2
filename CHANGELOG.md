@@ -1,5 +1,14 @@
 # Nhật ký phiên bản — AIOBE / OBE-AUN-QA
 
+## v1.3.1 — 2026-06-06
+
+### Thêm / chỉnh
+- **Xóa chương trình đào tạo** ngay trên danh sách CTĐT (soft-delete) — dọn các CTĐT import thử/trùng.
+- **Ẩn "Import hàng loạt đề cương"** trên trang chương trình (tốn thời gian, dễ map sai). Vẫn giữ
+  **import đề cương trong từng học phần** (gắn chính xác). Bảng "sức khỏe đề cương" được giữ nguyên.
+- **Trang Admin "Chi phí AI"** (`/admin/llm-cost`): tổng chi phí ước tính/token/lượt gọi + phân rã
+  theo chương trình, chọn khoảng 7/30/90/365 ngày.
+
 ## v1.3.0 — 2026-06-05 — Hạ tầng (Nhóm B)
 
 ### Hạ tầng quy mô lớn
