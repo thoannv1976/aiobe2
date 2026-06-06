@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { api, apiUpload } from "@/lib/api";
+import { api } from "@/lib/api";
 
 const LEVELS = ["", "I", "R", "M"];
 
@@ -18,14 +18,9 @@ export default function ProgramDetail() {
   const [ploReview, setPloReview] = useState<any>(null);
   const [ploReviewBusy, setPloReviewBusy] = useState(false);
   const [err, setErr] = useState("");
-  // Phase 3: import hàng loạt + bảng sức khỏe đề cương
+  // Bảng sức khỏe đề cương toàn ngành.
   const [health, setHealth] = useState<any>(null);
   const [healthBusy, setHealthBusy] = useState(false);
-  const [bulkBusy, setBulkBusy] = useState(false);
-  const [bulkResults, setBulkResults] = useState<any[] | null>(null);
-  // Import 2 bước: parse → gán học phần → xác nhận lưu
-  const [bulkParsed, setBulkParsed] = useState<any>(null); // {courses, rows}
-  const [rowCourse, setRowCourse] = useState<Record<number, string>>({}); // index → course_id (chuỗi)
 
   async function loadHealth() {
     setErr("");
@@ -36,62 +31,6 @@ export default function ProgramDetail() {
       setErr(e.message);
     } finally {
       setHealthBusy(false);
-    }
-  }
-
-  // Bước 1: bóc tách (chưa lưu) → gợi ý học phần để người dùng xác nhận.
-  async function parseFiles(files: FileList) {
-    setErr("");
-    setBulkResults(null);
-    setBulkParsed(null);
-    if (files.length > 15 &&
-        !confirm(`Bạn chọn ${files.length} file. Xử lý nhiều file cùng lúc có thể lâu. ` +
-                 `Nên làm theo từng mẻ ~10-15 file. Vẫn tiếp tục?`)) {
-      return;
-    }
-    setBulkBusy(true);
-    try {
-      const fd = new FormData();
-      Array.from(files).forEach((f) => fd.append("files", f));
-      const res = await apiUpload(`/api/programs/${id}/parse-outlines`, fd);
-      setBulkParsed(res);
-      // Khởi tạo lựa chọn học phần = gợi ý của AI (người dùng có thể đổi).
-      const init: Record<number, string> = {};
-      (res.rows || []).forEach((r: any, i: number) => {
-        init[i] = r.suggested_course_id ? String(r.suggested_course_id) : "";
-      });
-      setRowCourse(init);
-    } catch (e: any) {
-      setErr(e.message);
-    } finally {
-      setBulkBusy(false);
-    }
-  }
-
-  // Bước 2: lưu theo ĐÚNG học phần đã chọn cho từng file.
-  async function confirmImport() {
-    setErr("");
-    const items = (bulkParsed.rows || [])
-      .map((r: any, i: number) => ({ r, cid: rowCourse[i] }))
-      .filter((x: any) => x.r.outline && x.cid)
-      .map((x: any) => ({ course_id: Number(x.cid), outline: x.r.outline, source_name: x.r.filename }));
-    if (items.length === 0) {
-      setErr("Hãy chọn học phần cho ít nhất một file bóc tách thành công.");
-      return;
-    }
-    setBulkBusy(true);
-    try {
-      const res = await api(`/api/programs/${id}/import-outlines-confirm`, {
-        method: "POST",
-        body: JSON.stringify({ items, run_qa: true }),
-      });
-      setBulkResults(res.results || []);
-      setBulkParsed(null);
-    } catch (e: any) {
-      setErr(e.message);
-    } finally {
-      await loadHealth();
-      setBulkBusy(false);
     }
   }
 
@@ -286,93 +225,23 @@ export default function ProgramDetail() {
         </div>
       </section>
 
-      {/* Phase 3: Import hàng loạt đề cương + Bảng sức khỏe đề cương toàn ngành */}
+      {/* Bảng sức khỏe đề cương toàn ngành.
+          (Đã ẩn Import hàng loạt do tốn thời gian & dễ map sai — dùng "Import đề cương đã có"
+           trong từng học phần để gắn chính xác.) */}
       <section className="mt-6 rounded border border-amber-200 bg-amber-50/40 p-4">
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-lg font-semibold">Sức khỏe đề cương toàn ngành</h2>
           <div className="flex flex-wrap gap-2">
-            <label className={`cursor-pointer rounded bg-amber-500 px-3 py-1.5 text-sm text-white ${bulkBusy ? "opacity-50" : ""}`}
-              title="Tải lên nhiều đề cương đã có (PDF/DOCX). AI bóc tách + GỢI Ý học phần; bạn xác nhận đúng học phần rồi mới lưu.">
-              {bulkBusy ? "Đang xử lý..." : "⬆ Import hàng loạt (chọn nhiều file)"}
-              <input type="file" multiple accept=".pdf,.docx,.txt" className="hidden" disabled={bulkBusy}
-                onChange={(e) => e.target.files?.length && parseFiles(e.target.files)} />
-            </label>
             <button onClick={loadHealth} disabled={healthBusy}
               className="rounded bg-indigo-600 px-3 py-1.5 text-sm text-white disabled:opacity-50">
               {healthBusy ? "Đang tải..." : "Xem bảng sức khỏe"}
             </button>
           </div>
         </div>
-
-        {/* Bước rà soát: gán đúng học phần cho từng file trước khi lưu */}
-        {bulkParsed && (
-          <div className="mb-3 rounded border border-amber-400 bg-white p-3 text-xs">
-            <div className="mb-2 font-semibold">
-              Xác nhận học phần cho từng đề cương ({bulkParsed.rows.length} file) — kiểm tra/đổi học phần nếu AI gợi ý sai, rồi bấm Lưu.
-            </div>
-            <table className="w-full border">
-              <thead>
-                <tr className="bg-slate-100">
-                  <th className="border p-1 text-left">File</th>
-                  <th className="border p-1">Mã AI đọc</th>
-                  <th className="border p-1">CLO</th>
-                  <th className="border p-1 text-left">Gán vào học phần</th>
-                  <th className="border p-1 text-left">Ghi chú</th>
-                </tr>
-              </thead>
-              <tbody>
-                {bulkParsed.rows.map((r: any, i: number) => (
-                  <tr key={i} className={r.error ? "bg-red-50" : ""}>
-                    <td className="border p-1">{r.filename}</td>
-                    <td className="border p-1 text-center">{r.detected_course_code || "—"}</td>
-                    <td className="border p-1 text-center">{r.error ? "—" : r.clos_count}</td>
-                    <td className="border p-1">
-                      {r.error ? (
-                        <span className="text-red-600">không lưu được</span>
-                      ) : (
-                        <select value={rowCourse[i] || ""}
-                          onChange={(e) => setRowCourse((p) => ({ ...p, [i]: e.target.value }))}
-                          className={`w-full rounded border p-1 ${!rowCourse[i] ? "border-amber-500 bg-amber-50" : ""}`}>
-                          <option value="">— Chọn học phần —</option>
-                          {bulkParsed.courses.map((c: any) => (
-                            <option key={c.id} value={c.id}>{c.code} — {c.name}</option>
-                          ))}
-                        </select>
-                      )}
-                    </td>
-                    <td className="border p-1 text-amber-700">
-                      {r.error
-                        ? r.error
-                        : !r.suggested_course_id
-                        ? "AI không chắc — hãy chọn thủ công"
-                        : (r.unmatched_plos?.length ? `PLO bỏ: ${r.unmatched_plos.join(", ")}` : "")}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <div className="mt-2 flex gap-2">
-              <button onClick={confirmImport} disabled={bulkBusy}
-                className="rounded bg-amber-600 px-4 py-2 font-medium text-white disabled:opacity-50">
-                {bulkBusy ? "Đang lưu..." : "Lưu các đề cương đã gán & chấm điểm"}
-              </button>
-              <button onClick={() => { setBulkParsed(null); setRowCourse({}); }}
-                className="rounded bg-slate-100 px-4 py-2 hover:bg-slate-200">Huỷ</button>
-            </div>
-          </div>
-        )}
-
-        {bulkResults && (
-          <div className="mb-3 rounded border bg-white p-2 text-xs">
-            <b>Kết quả lưu {bulkResults.length} đề cương:</b>
-            {bulkResults.map((r, i) => (
-              <div key={i} className={r.outline_id ? "text-green-700" : "text-amber-700"}>
-                {r.outline_id ? "✓" : "⚠"} {r.course_code || "(học phần?)"}
-                {r.score != null ? ` · điểm ${r.score}/100` : ""} · {r.message}
-              </div>
-            ))}
-          </div>
-        )}
+        <p className="mb-2 text-xs text-slate-500">
+          Mẹo: để gắn đề cương đã có vào đúng học phần, mở học phần và dùng nút
+          “⬆ Import đề cương đã có”.
+        </p>
 
         {health && (
           <div className="overflow-x-auto">

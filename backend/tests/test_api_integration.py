@@ -62,6 +62,16 @@ def test_requires_auth(client):
     assert client.get("/api/programs").status_code == 401
 
 
+def test_delete_program(client):
+    """Xóa CTĐT (soft-delete) → biến mất khỏi danh sách."""
+    h = {"Authorization": f"Bearer {_token(client)}"}
+    pid = client.post("/api/programs", json={"name": "Tạm", "code": "DELME"}, headers=h).json()["id"]
+    assert any(p["id"] == pid for p in client.get("/api/programs", headers=h).json())
+    r = client.delete(f"/api/programs/{pid}", headers=h)
+    assert r.status_code == 204, r.text
+    assert all(p["id"] != pid for p in client.get("/api/programs", headers=h).json())
+
+
 def test_llm_retry_and_usage(client, monkeypatch):
     """LLM: thử lại khi lỗi tạm thời + ghi nhận token/chi phí (LlmUsage)."""
     from app.database import SessionLocal
