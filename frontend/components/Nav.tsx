@@ -19,6 +19,11 @@ export default function Nav() {
           <Link href="/extract" className="hover:text-indigo-700">Trích xuất AI</Link>
           <Link href="/programs" className="hover:text-indigo-700">CTĐT</Link>
           <Link href="/qa" className="hover:text-indigo-700">Kiểm định</Link>
+          {user && user.role === "super_admin" && (
+            <Link href="/admin/tenants" className="font-medium text-slate-800 hover:text-indigo-700">
+              🏛 Quản trị nền tảng
+            </Link>
+          )}
           {user && (user.role === "admin" || user.role === "program_manager") && (
             <Link href="/admin" className="hover:text-indigo-700">Quản trị</Link>
           )}
