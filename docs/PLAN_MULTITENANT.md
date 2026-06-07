@@ -250,7 +250,8 @@ Lưu trong `tenants.settings_json` (+ bảng phụ nếu lớn):
 
 ### Tiến độ thực thi
 - ✅ **C0 — Nền tảng dữ liệu**: bảng `tenants` (kèm `is_enabled`, `activated_at`, `valid_until`), thêm `tenant_id` nullable + index cho cả 28 bảng, tạo tenant mặc định, backfill toàn bộ dữ liệu cũ. Migration `9c3e5a7b1d2f`. **Không đổi hành vi app.**
-- ⏳ C1 → C5: theo §15.
+- ✅ **C1 — Cô lập dữ liệu ở tầng ứng dụng** (`app/core/tenant.py`): gắn tenant vào `Session.info` từ user đã xác thực; **auto-filter** mọi SELECT (`do_orm_execute` + `with_loader_criteria` biểu thức trực tiếp — tránh bẫy lambda-caching) và **auto-set** `tenant_id` khi ghi (`before_flush`); JWT mang `tenant_id`; tra cứu user lúc đăng nhập dùng `skip_tenant`; job nền set tenant từ `job.tenant_id`. Khi chưa có tenant (test/cũ) lớp tự tắt. **Có test cô lập chéo A↔B.** Chưa enforce NOT NULL/RLS (để C2).
+- ⏳ C2 → C5: theo §15.
 
 ---
 

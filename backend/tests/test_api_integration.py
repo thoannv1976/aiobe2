@@ -522,3 +522,50 @@ def test_bulk_import_confirm_rejects_wrong_program_course(client, monkeypatch):
     assert r.status_code == 200, r.text
     res = r.json()["results"][0]
     assert res["outline_id"] is None and "không hợp lệ" in res["message"].lower()
+
+
+def test_cross_tenant_isolation(client):
+    """Pha C1: trường A KHÔNG thấy/đụng được dữ liệu trường B (cô lập theo tenant)."""
+    from app.core.security import hash_password
+    from app.database import SessionLocal
+    from app.models import Tenant, User
+
+    db = SessionLocal()
+    ta = Tenant(code="truong-a", name="Trường A")
+    tb = Tenant(code="truong-b", name="Trường B")
+    db.add_all([ta, tb])
+    db.commit()
+    taid, tbid = ta.id, tb.id
+    db.add(User(name="A", email="mgrA@t.vn", password_hash=hash_password("pw"),
+                role="program_manager", tenant_id=taid))
+    db.add(User(name="B", email="mgrB@t.vn", password_hash=hash_password("pw"),
+                role="program_manager", tenant_id=tbid))
+    db.commit()
+    db.close()
+
+    def tok(email):
+        r = client.post("/api/auth/login", data={"username": email, "password": "pw"})
+        assert r.status_code == 200, r.text
+        # JWT mang tenant_id
+        return r.json()["access_token"]
+
+    ha = {"Authorization": f"Bearer {tok('mgrA@t.vn')}"}
+    hb = {"Authorization": f"Bearer {tok('mgrB@t.vn')}"}
+
+    pa = client.post("/api/programs", json={"name": "PA", "code": "PA"}, headers=ha).json()["id"]
+    pb = client.post("/api/programs", json={"name": "PB", "code": "PB"}, headers=hb).json()["id"]
+
+    # A chỉ thấy CTĐT của A; B chỉ thấy của B.
+    a_ids = {p["id"] for p in client.get("/api/programs", headers=ha).json()}
+    b_ids = {p["id"] for p in client.get("/api/programs", headers=hb).json()}
+    assert pa in a_ids and pb not in a_ids
+    assert pb in b_ids and pa not in b_ids
+
+    # Truy cập chéo theo id → 404 (không lộ tồn tại).
+    assert client.get(f"/api/programs/{pb}", headers=ha).status_code == 404
+    assert client.get(f"/api/programs/{pa}", headers=hb).status_code == 404
+
+    # Dữ liệu con (PLO) cũng cô lập: A tạo PLO; B dù dò đúng program id vẫn KHÔNG thấy (không rò rỉ).
+    client.post(f"/api/programs/{pa}/plos", json={"code": "PLO1", "description": "x"}, headers=ha)
+    assert len(client.get(f"/api/programs/{pa}/plos", headers=ha).json()) == 1
+    assert client.get(f"/api/programs/{pa}/plos", headers=hb).json() == []

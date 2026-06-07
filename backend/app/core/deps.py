@@ -6,6 +6,7 @@ from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 
 from app.core.security import decode_token
+from app.core.tenant import set_session_tenant
 from app.database import get_db
 from app.models import Role, User
 
@@ -23,9 +24,17 @@ def get_current_user(
     payload = decode_token(token)
     if not payload or "sub" not in payload:
         raise creds_exc
-    user = db.query(User).filter(User.email == payload["sub"]).first()
+    # Tra cứu user KHÔNG lọc tenant (chưa biết tenant); email đang là duy nhất toàn cục.
+    user = (
+        db.query(User)
+        .filter(User.email == payload["sub"])
+        .execution_options(skip_tenant=True)
+        .first()
+    )
     if not user or not user.is_active:
         raise creds_exc
+    # Từ đây, MỌI truy vấn trên session này tự cô lập theo tenant của user.
+    set_session_tenant(db, user.tenant_id)
     return user
 
 

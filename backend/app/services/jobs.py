@@ -60,6 +60,9 @@ def run_job(job_id: int) -> None:
         job = db.get(Job, job_id)
         if not job or job.status in ("running", "done"):
             return
+        # Cô lập dữ liệu theo tenant của job (worker chạy ngoài request HTTP).
+        if job.tenant_id is not None:
+            db.info["tenant_id"] = job.tenant_id
         job.status = "running"
         job.message = "Đang xử lý..."
         db.commit()
