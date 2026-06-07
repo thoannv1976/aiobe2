@@ -42,6 +42,9 @@ class Settings(BaseSettings):
 
     cors_origins: str = "http://localhost:3000"
 
+    # Multi-tenant (Nhóm C): tên miền gốc để suy tenant theo subdomain <code>.eduobe.vn
+    base_domain: str = "eduobe.vn"
+
     # Pool kết nối DB (Postgres/Cloud SQL). Bỏ qua với SQLite.
     db_pool_size: int = 5          # số kết nối thường trực mỗi instance
     db_max_overflow: int = 10      # kết nối tạm khi cao điểm

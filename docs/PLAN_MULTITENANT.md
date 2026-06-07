@@ -259,8 +259,15 @@ Lưu trong `tenants.settings_json` (+ bảng phụ nếu lớn):
   - LLM usage gắn `tenant_id` (qua `llm_scope`).
   - **Tests**: kế thừa tenant + email theo tenant + fallback ghi (61 passed).
   - ⚠️ *Cần kiểm thử RLS/NOT NULL trên Postgres staging* (môi trường dev hiện là SQLite nên 2 mục này là no-op khi test).
-  - ⚠️ *Gap tạm thời*: đăng nhập đang tra theo email toàn cục (`.first()`); khi 2 trường trùng email sẽ chưa phân biệt — **sẽ xử lý ở C3** (suy tenant theo subdomain trước khi tra user).
-- ⏳ C3 → C5: theo §15.
+- ✅ **C3 — Định tuyến + cấp phát + Super-Admin + branding + hạn dùng**:
+  - **Phân giải tenant theo subdomain** `<code>.eduobe.vn` (hoặc header `X-Tenant`) — `tenant_code_from_host`/`resolve_request_tenant`, `base_domain` cấu hình được.
+  - **Đăng nhập theo tenant**: tra user trong đúng trường → **đóng gap C2** (cùng email ở 2 trường vẫn đúng).
+  - **Vai trò `super_admin`** (nền tảng, xuyên trường): không bị scope; **API quản trị tenant** `GET/POST /api/tenants`, `PATCH`, `POST .../enable` (gia hạn sau thanh toán), `POST .../suspend` — tạo trường + admin đầu tiên.
+  - **Enforce hạn dùng (billing theo thời gian)**: trường hết hạn/đình chỉ → chặn đăng nhập & mọi request của user trường đó (trừ super-admin); super-admin **enable + gia hạn** để mở lại.
+  - **Branding công khai** `GET /api/tenant/branding` theo subdomain.
+  - **Frontend**: trang Super-Admin `/admin/tenants` (cấp phát/gia hạn/tạm ngừng); seed thêm `super@obe.vn`.
+  - **Tests**: cấp phát + login scoped + branding + suspend→403 + enable→200 + cùng email 2 trường (63 passed).
+- ⏳ C4 → C5: theo §15 (key AI theo tenant + mã hóa KMS + hạn mức/chi phí theo tenant + fairness; rồi export/backup/quan trắc/pen-test).
 
 ---
 

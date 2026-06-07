@@ -625,3 +625,68 @@ def test_c2_write_fallback_default_tenant(client):
         assert tid == 987654
     finally:
         tmod.set_default_tenant_id(None)  # tránh ảnh hưởng test khác
+
+
+def test_c3_provisioning_branding_and_subscription(client):
+    """C3: Super-Admin cấp phát trường + admin trường scoped; branding; suspend/enable theo hạn dùng."""
+    from app.core.security import hash_password
+    from app.database import SessionLocal
+    from app.models import User
+
+    db = SessionLocal()
+    if not db.query(User).filter(User.email == "super@c3.vn").first():
+        db.add(User(name="S", email="super@c3.vn", password_hash=hash_password("pw"), role="super_admin"))
+        db.commit()
+    db.close()
+
+    def login(email, pw, headers=None):
+        r = client.post("/api/auth/login", data={"username": email, "password": pw}, headers=headers or {})
+        return r
+
+    sh = {"Authorization": f"Bearer {login('super@c3.vn', 'pw').json()['access_token']}"}
+
+    # Không phải Super-Admin → 403 khi quản trị tenant.
+    assert client.get("/api/tenants", headers={"Authorization": f"Bearer {_token(client)}"}).status_code == 403
+
+    # Super tạo trường + admin đầu tiên.
+    r = client.post("/api/tenants", headers=sh, json={
+        "code": "truongx", "name": "Trường X", "admin_email": "admin@x.vn", "admin_password": "pw"})
+    assert r.status_code == 201, r.text
+    txid = r.json()["id"]
+
+    # Admin trường đăng nhập qua subdomain (X-Tenant) → dữ liệu scoped.
+    ah = {"Authorization": f"Bearer {login('admin@x.vn', 'pw', {'X-Tenant': 'truongx'}).json()['access_token']}"}
+    pa = client.post("/api/programs", json={"name": "PX", "code": "PX"}, headers=ah).json()["id"]
+    assert pa in {p["id"] for p in client.get("/api/programs", headers=ah).json()}
+
+    # Branding theo subdomain.
+    b = client.get("/api/tenant/branding", headers={"X-Tenant": "truongx"}).json()
+    assert b["tenant"] == "truongx" and b["name"] == "Trường X"
+
+    # Tạm ngừng → admin trường bị chặn (kể cả token còn hạn) + không đăng nhập lại được.
+    assert client.post(f"/api/tenants/{txid}/suspend", headers=sh).status_code == 200
+    assert client.get("/api/programs", headers=ah).status_code == 403
+    assert login("admin@x.vn", "pw", {"X-Tenant": "truongx"}).status_code == 403
+
+    # Gia hạn (renew sau thanh toán) → dùng lại được.
+    assert client.post(f"/api/tenants/{txid}/enable", headers=sh, json={"valid_days": 365}).status_code == 200
+    ah2 = {"Authorization": f"Bearer {login('admin@x.vn', 'pw', {'X-Tenant': 'truongx'}).json()['access_token']}"}
+    assert client.get("/api/programs", headers=ah2).status_code == 200
+
+
+def test_c3_tenant_scoped_login_same_email(client):
+    """C3: cùng email ở 2 trường → đăng nhập theo subdomain chọn đúng trường."""
+    from app.core.security import hash_password
+    from app.database import SessionLocal
+    from app.models import User
+    db = SessionLocal()
+    if not db.query(User).filter(User.email == "super@c3.vn").first():
+        db.add(User(name="S", email="super@c3.vn", password_hash=hash_password("pw"), role="super_admin"))
+        db.commit()
+    db.close()
+    sh = {"Authorization": f"Bearer {client.post('/api/auth/login', data={'username':'super@c3.vn','password':'pw'}).json()['access_token']}"}
+    client.post("/api/tenants", headers=sh, json={"code": "tr1", "name": "T1", "admin_email": "dup@same.vn", "admin_password": "pw"})
+    client.post("/api/tenants", headers=sh, json={"code": "tr2", "name": "T2", "admin_email": "dup@same.vn", "admin_password": "pw"})
+    # Đăng nhập cùng email nhưng khác subdomain → đều thành công (chọn đúng user theo tenant).
+    assert client.post("/api/auth/login", data={"username": "dup@same.vn", "password": "pw"}, headers={"X-Tenant": "tr1"}).status_code == 200
+    assert client.post("/api/auth/login", data={"username": "dup@same.vn", "password": "pw"}, headers={"X-Tenant": "tr2"}).status_code == 200

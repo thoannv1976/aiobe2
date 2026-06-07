@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 
@@ -12,16 +12,34 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
 @router.post("/login", response_model=Token)
-def login(form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    # OAuth2 form dùng `username` cho email.
-    user = (
-        db.query(User)
-        .filter(User.email == form.username)
-        .execution_options(skip_tenant=True)
-        .first()
+def login(
+    request: Request,
+    form: OAuth2PasswordRequestForm = Depends(),
+    db: Session = Depends(get_db),
+):
+    # OAuth2 form dùng `username` cho email. Email DUY NHẤT THEO TENANT (C2) →
+    # phân giải tenant theo subdomain/X-Tenant rồi tra user trong đúng trường (C3).
+    from app.core.tenant import resolve_request_tenant, tenant_active
+    from app.models import Tenant
+
+    tenant = resolve_request_tenant(
+        db, request.headers.get("host"), request.headers.get("x-tenant")
     )
+    q = db.query(User).filter(User.email == form.username).execution_options(skip_tenant=True)
+    if tenant is not None:
+        q = q.filter(User.tenant_id == tenant.id)
+    user = q.first()
     if not user or not verify_password(form.password, user.password_hash):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sai email hoặc mật khẩu")
+    # Chặn đăng nhập nếu trường hết hạn/đình chỉ (trừ Super-Admin nền tảng).
+    if user.role != Role.SUPER_ADMIN.value and user.tenant_id is not None:
+        t = tenant or (
+            db.query(Tenant).filter(Tenant.id == user.tenant_id)
+            .execution_options(skip_tenant=True).first()
+        )
+        if not tenant_active(t):
+            raise HTTPException(status.HTTP_403_FORBIDDEN,
+                                "Trường đã hết hạn sử dụng hoặc bị tạm ngừng.")
     token = create_access_token(user.email, user.role, tenant_id=user.tenant_id)
     return Token(access_token=token, user=UserOut.model_validate(user))
 

@@ -203,6 +203,9 @@ export default function AdminPage() {
           <a href="/admin/llm-cost" className="rounded bg-emerald-600 px-3 py-2 text-sm text-white">
             💰 Chi phí AI
           </a>
+          <a href="/admin/tenants" className="rounded bg-slate-800 px-3 py-2 text-sm text-white">
+            🏛 Quản trị nền tảng (trường)
+          </a>
         </div>
       </div>
 

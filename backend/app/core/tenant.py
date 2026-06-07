@@ -11,9 +11,12 @@ dùng execution_option `skip_tenant=True`.
 """
 from __future__ import annotations
 
+from datetime import datetime
+
 from sqlalchemy import event, text
 from sqlalchemy.orm import Session, with_loader_criteria
 
+from app.config import settings
 from app.database import Base
 
 _TENANT_MODELS: list | None = None
@@ -90,3 +93,46 @@ def _set_rls_on_begin(session, _transaction, connection) -> None:  # noqa: ANN00
     if tid is not None:
         connection.exec_driver_sql(f"SET LOCAL app.tenant_id = {int(tid)}")
 
+
+
+# ---------------------------------------------------------------------------
+# C3: phân giải tenant theo subdomain + kiểm tra hiệu lực (hạn dùng)
+# ---------------------------------------------------------------------------
+def tenant_code_from_host(host: str | None) -> str | None:
+    """Lấy mã tenant từ host dạng `<code>.eduobe.vn`. Trả None nếu không khớp."""
+    if not host:
+        return None
+    host = host.split(":")[0].strip().lower()
+    base = settings.base_domain.lower()
+    if not host.endswith("." + base):
+        return None
+    sub = host[: -(len(base) + 1)]
+    label = sub.split(".")[0] if sub else ""
+    if not label or label in ("www", "app", "api"):
+        return None
+    return label
+
+
+def resolve_request_tenant(db: Session, host: str | None, header_code: str | None):
+    """Tìm Tenant theo header X-Tenant (ưu tiên) hoặc subdomain. Trả Tenant|None."""
+    from app.models import Tenant
+
+    code = (header_code or "").strip().lower() or tenant_code_from_host(host)
+    if not code:
+        return None
+    return (
+        db.query(Tenant)
+        .filter(Tenant.code == code)
+        .execution_options(skip_tenant=True)
+        .first()
+    )
+
+
+def tenant_active(tenant) -> bool:
+    """Tenant còn hiệu lực sử dụng (đã bật + chưa hết hạn)."""
+    if tenant is None:
+        return True  # không gắn tenant (đơn-trường/cũ) → cho phép
+    if not getattr(tenant, "is_enabled", True):
+        return False
+    vu = getattr(tenant, "valid_until", None)
+    return not (vu and vu < datetime.utcnow())

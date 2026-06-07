@@ -52,6 +52,10 @@ def run() -> None:
         set_default_tenant_id(tenant.id)
 
         # --- Người dùng ---
+        # Super-Admin nền tảng (vận hành đa trường) — KHÔNG thuộc trường nào về mặt nghiệp vụ,
+        # nhưng vẫn gắn tenant mặc định để thỏa NOT NULL trên Postgres.
+        db.add(User(name="Super Admin", email="super@obe.vn",
+                    password_hash=hash_password("super123"), role="super_admin"))
         users = [
             User(name="Quản trị", email="admin@obe.vn", password_hash=hash_password("admin123"), role="admin"),
             User(name="Trưởng khoa", email="manager@obe.vn", password_hash=hash_password("manager123"), role="program_manager"),

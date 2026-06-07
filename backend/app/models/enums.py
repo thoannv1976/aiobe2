@@ -3,7 +3,8 @@ from enum import Enum
 
 
 class Role(str, Enum):
-    ADMIN = "admin"                 # Admin hệ thống
+    SUPER_ADMIN = "super_admin"     # Quản trị NỀN TẢNG (đa trường) — vận hành tenant
+    ADMIN = "admin"                 # Admin của MỘT trường (tenant)
     PROGRAM_MANAGER = "program_manager"  # Trưởng khoa/bộ môn
     LECTURER = "lecturer"           # Giảng viên
     QA = "qa"                       # Cán bộ ĐBCL / Kiểm định
