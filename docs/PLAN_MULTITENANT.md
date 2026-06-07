@@ -238,15 +238,19 @@ Lưu trong `tenants.settings_json` (+ bảng phụ nếu lớn):
 
 ---
 
-## 16. Quyết định cần chốt (trước khi code)
+## 16. Quyết định đã CHỐT (2026-06-07)
 
-1. **Định tuyến**: subdomain `*.eduobe.vn` (mặc định) hay ưu tiên custom domain mỗi trường?
-2. **Email người dùng**: duy nhất theo (tenant) hay 1 danh tính dùng nhiều trường (memberships)?
-3. **Key AI**: mỗi trường tự cấp key (chi phí về trường) hay nền tảng cấp key + tính phí lại theo token?
-4. **RLS**: bật RLS Postgres (khuyến nghị) — chấp nhận chi phí thiết lập role/`SET LOCAL`, hay chỉ lọc ở tầng app giai đoạn đầu?
-5. **Mức cách ly**: shared-schema cho tất cả, hay **lai** (trường lớn/đặc thù → DB riêng)?
-6. **Mã hóa key**: dùng Cloud KMS ngay ở C2 hay để C4?
-7. **Tính phí/billing**: tích hợp cổng thanh toán/hoá đơn ở phase nào (gắn gói thuê 300tr/năm)?
+1. **Định tuyến**: ✅ **Subdomain `*.eduobe.vn`** (mỗi trường một subdomain theo `tenants.code`).
+2. **Email người dùng**: ✅ **Duy nhất theo tenant** — unique `(tenant_id, email)`.
+3. **Key AI**: ✅ **Mỗi trường tự nạp API key** → chi phí về đúng trường; không dùng key chung.
+4. **RLS**: ✅ **Bật RLS Postgres** (cách ly 2 lớp: app filter + RLS).
+5. **Mức cách ly**: ✅ **Shared-schema cho tất cả** (không lai DB-per-tenant).
+6. **Mã hóa key**: ➜ **Để ở C4** (giữ cách lưu hiện tại ở C0–C2 cho gọn; C4 bổ sung mã hóa khi hoàn thiện quản lý key theo tenant).
+7. **Billing**: ✅ **Theo thời gian sử dụng** — mỗi tenant có `valid_until` (mặc định +365 ngày). Hết hạn → **chặn sử dụng** (trừ Super-Admin); sau khi trường thanh toán, **Super-Admin bật lại + gia hạn** (`is_enabled` + `valid_until`). Chưa tích hợp cổng thanh toán tự động.
+
+### Tiến độ thực thi
+- ✅ **C0 — Nền tảng dữ liệu**: bảng `tenants` (kèm `is_enabled`, `activated_at`, `valid_until`), thêm `tenant_id` nullable + index cho cả 28 bảng, tạo tenant mặc định, backfill toàn bộ dữ liệu cũ. Migration `9c3e5a7b1d2f`. **Không đổi hành vi app.**
+- ⏳ C1 → C5: theo §15.
 
 ---
 

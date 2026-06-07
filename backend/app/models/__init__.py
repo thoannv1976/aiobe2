@@ -39,6 +39,7 @@ from app.models.tables import (  # noqa: F401
     Plo,
     Program,
     Question,
+    Tenant,
     Textbook,
     User,
 )

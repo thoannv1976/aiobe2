@@ -35,6 +35,7 @@ class User(Base):
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)  # multi-tenant (Nhóm C)
     name: Mapped[str] = mapped_column(String(255))
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(255))
@@ -52,6 +53,7 @@ class Assignment(Base):
     __tablename__ = "assignments"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)  # multi-tenant (Nhóm C)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     program_id: Mapped[int | None] = mapped_column(ForeignKey("programs.id"), nullable=True)
     course_id: Mapped[int | None] = mapped_column(ForeignKey("courses.id"), nullable=True)
@@ -67,6 +69,7 @@ class Program(Base):
     __tablename__ = "programs"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)  # multi-tenant (Nhóm C)
     name: Mapped[str] = mapped_column(String(500))
     code: Mapped[str] = mapped_column(String(100), index=True)
     level: Mapped[str | None] = mapped_column(String(100), nullable=True)
@@ -88,6 +91,7 @@ class Plo(Base):
     __tablename__ = "plos"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)  # multi-tenant (Nhóm C)
     program_id: Mapped[int] = mapped_column(ForeignKey("programs.id", ondelete="CASCADE"), index=True)
     code: Mapped[str] = mapped_column(String(50))
     description: Mapped[str] = mapped_column(Text)
@@ -102,6 +106,7 @@ class Pi(Base):
     __tablename__ = "pis"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)  # multi-tenant (Nhóm C)
     plo_id: Mapped[int] = mapped_column(ForeignKey("plos.id", ondelete="CASCADE"), index=True)
     code: Mapped[str] = mapped_column(String(50))
     description: Mapped[str] = mapped_column(Text)
@@ -113,6 +118,7 @@ class Course(Base):
     __tablename__ = "courses"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)  # multi-tenant (Nhóm C)
     program_id: Mapped[int] = mapped_column(ForeignKey("programs.id", ondelete="CASCADE"), index=True)
     code: Mapped[str] = mapped_column(String(100), index=True)
     name: Mapped[str] = mapped_column(String(500))
@@ -139,6 +145,7 @@ class CoursePlo(Base):
     __table_args__ = (UniqueConstraint("course_id", "plo_id"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)  # multi-tenant (Nhóm C)
     course_id: Mapped[int] = mapped_column(ForeignKey("courses.id", ondelete="CASCADE"))
     plo_id: Mapped[int] = mapped_column(ForeignKey("plos.id", ondelete="CASCADE"))
     level: Mapped[str] = mapped_column(String(10))  # I|R|M
@@ -153,6 +160,7 @@ class CourseOutline(Base):
     __tablename__ = "course_outlines"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)  # multi-tenant (Nhóm C)
     course_id: Mapped[int] = mapped_column(ForeignKey("courses.id", ondelete="CASCADE"), index=True)
     version: Mapped[int] = mapped_column(Integer, default=1)
     status: Mapped[str] = mapped_column(String(50), default="draft")
@@ -178,6 +186,7 @@ class Clo(Base):
     __tablename__ = "clos"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)  # multi-tenant (Nhóm C)
     outline_id: Mapped[int] = mapped_column(ForeignKey("course_outlines.id", ondelete="CASCADE"), index=True)
     code: Mapped[str] = mapped_column(String(50))
     description: Mapped[str] = mapped_column(Text)
@@ -196,6 +205,7 @@ class CloPlo(Base):
     __table_args__ = (UniqueConstraint("clo_id", "plo_id"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)  # multi-tenant (Nhóm C)
     clo_id: Mapped[int] = mapped_column(ForeignKey("clos.id", ondelete="CASCADE"))
     plo_id: Mapped[int] = mapped_column(ForeignKey("plos.id", ondelete="CASCADE"))
     contribution_level: Mapped[str] = mapped_column(String(10))  # I|R|M
@@ -207,6 +217,7 @@ class Assessment(Base):
     __tablename__ = "assessments"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)  # multi-tenant (Nhóm C)
     outline_id: Mapped[int] = mapped_column(ForeignKey("course_outlines.id", ondelete="CASCADE"), index=True)
     name: Mapped[str] = mapped_column(String(255))
     type: Mapped[str | None] = mapped_column(String(100), nullable=True)
@@ -224,6 +235,7 @@ class AssessmentClo(Base):
     __table_args__ = (UniqueConstraint("assessment_id", "clo_id"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)  # multi-tenant (Nhóm C)
     assessment_id: Mapped[int] = mapped_column(
         ForeignKey("assessments.id", ondelete="CASCADE")
     )
@@ -236,6 +248,7 @@ class LessonPlan(Base):
     __tablename__ = "lesson_plans"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)  # multi-tenant (Nhóm C)
     outline_id: Mapped[int] = mapped_column(ForeignKey("course_outlines.id", ondelete="CASCADE"), index=True)
     week: Mapped[int] = mapped_column(Integer, default=1)
     topic: Mapped[str] = mapped_column(String(500))
@@ -252,6 +265,7 @@ class LessonPlanClo(Base):
     __table_args__ = (UniqueConstraint("lesson_plan_id", "clo_id"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)  # multi-tenant (Nhóm C)
     lesson_plan_id: Mapped[int] = mapped_column(
         ForeignKey("lesson_plans.id", ondelete="CASCADE")
     )
@@ -267,6 +281,7 @@ class Textbook(Base):
     __tablename__ = "textbooks"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)  # multi-tenant (Nhóm C)
     course_id: Mapped[int] = mapped_column(ForeignKey("courses.id", ondelete="CASCADE"), index=True)
     title: Mapped[str] = mapped_column(String(500))
     version: Mapped[int] = mapped_column(Integer, default=1)
@@ -282,6 +297,7 @@ class Chapter(Base):
     __tablename__ = "chapters"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)  # multi-tenant (Nhóm C)
     textbook_id: Mapped[int] = mapped_column(ForeignKey("textbooks.id", ondelete="CASCADE"), index=True)
     order: Mapped[int] = mapped_column(Integer, default=1)
     title: Mapped[str] = mapped_column(String(500))
@@ -298,6 +314,7 @@ class ChapterClo(Base):
     __table_args__ = (UniqueConstraint("chapter_id", "clo_id"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)  # multi-tenant (Nhóm C)
     chapter_id: Mapped[int] = mapped_column(ForeignKey("chapters.id", ondelete="CASCADE"))
     clo_id: Mapped[int] = mapped_column(ForeignKey("clos.id", ondelete="CASCADE"), index=True)
 
@@ -315,6 +332,7 @@ class Question(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)  # multi-tenant (Nhóm C)
     course_id: Mapped[int] = mapped_column(ForeignKey("courses.id", ondelete="CASCADE"), index=True)
     clo_id: Mapped[int | None] = mapped_column(ForeignKey("clos.id"), nullable=True, index=True)
     bloom_level: Mapped[str] = mapped_column(String(50))
@@ -343,6 +361,7 @@ class ExamMatrix(Base):
     __tablename__ = "exam_matrices"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)  # multi-tenant (Nhóm C)
     course_id: Mapped[int] = mapped_column(ForeignKey("courses.id", ondelete="CASCADE"), index=True)
     name: Mapped[str] = mapped_column(String(255))
     # cells: [{clo_id, bloom_level, difficulty, count, points_each}]
@@ -365,6 +384,7 @@ class Exam(Base):
     __tablename__ = "exams"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)  # multi-tenant (Nhóm C)
     course_id: Mapped[int] = mapped_column(ForeignKey("courses.id", ondelete="CASCADE"), index=True)
     matrix_id: Mapped[int | None] = mapped_column(ForeignKey("exam_matrices.id"), nullable=True, index=True)
     name: Mapped[str] = mapped_column(String(255), default="Đề thi")
@@ -385,6 +405,7 @@ class ExamQuestion(Base):
     __tablename__ = "exam_question"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)  # multi-tenant (Nhóm C)
     exam_id: Mapped[int] = mapped_column(ForeignKey("exams.id", ondelete="CASCADE"), index=True)
     question_id: Mapped[int] = mapped_column(ForeignKey("questions.id"), index=True)
     order: Mapped[int] = mapped_column(Integer, default=1)
@@ -402,6 +423,7 @@ class Document(Base):
     __tablename__ = "documents"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)  # multi-tenant (Nhóm C)
     type: Mapped[str] = mapped_column(String(100), index=True)
     file_path: Mapped[str] = mapped_column(String(1000))
     mime: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -416,6 +438,7 @@ class Extraction(Base):
     __tablename__ = "extractions"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)  # multi-tenant (Nhóm C)
     document_id: Mapped[int] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"), index=True)
     payload_json: Mapped[dict] = mapped_column(JSON, default=dict)
     status: Mapped[str] = mapped_column(String(50), default="pending")  # pending|confirmed
@@ -426,6 +449,7 @@ class AuditLog(Base):
     __tablename__ = "audit_logs"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)  # multi-tenant (Nhóm C)
     user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
     entity: Mapped[str] = mapped_column(String(100), index=True)
     entity_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -442,6 +466,7 @@ class ApiKey(Base):
     __tablename__ = "api_keys"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)  # multi-tenant (Nhóm C)
     provider: Mapped[str] = mapped_column(String(50))  # anthropic | openai
     name: Mapped[str] = mapped_column(String(255), default="")
     api_key: Mapped[str] = mapped_column(String(500))
@@ -460,6 +485,7 @@ class LlmUsage(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)  # multi-tenant (Nhóm C)
     provider: Mapped[str] = mapped_column(String(50))
     model: Mapped[str | None] = mapped_column(String(150), nullable=True)
     prompt_tokens: Mapped[int] = mapped_column(Integer, default=0)
@@ -484,6 +510,7 @@ class Job(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)  # multi-tenant (Nhóm C)
     type: Mapped[str] = mapped_column(String(100), index=True)
     status: Mapped[str] = mapped_column(String(50), default="pending", index=True)
     progress: Mapped[int] = mapped_column(Integer, default=0)      # 0..100
@@ -505,6 +532,7 @@ class Lecture(Base):
     __tablename__ = "lectures"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)  # multi-tenant (Nhóm C)
     course_id: Mapped[int] = mapped_column(ForeignKey("courses.id", ondelete="CASCADE"), index=True)
     session_no: Mapped[int] = mapped_column(Integer, default=1)  # buổi học
     title: Mapped[str] = mapped_column(String(500))
@@ -513,3 +541,33 @@ class Lecture(Base):
     clo_codes_json: Mapped[list] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
+
+
+# ---------------------------------------------------------------------------
+# Multi-tenant (Nhóm C): mỗi tenant = một trường đại học
+# ---------------------------------------------------------------------------
+class Tenant(Base):
+    """Trường đại học (người thuê). Mọi bảng nghiệp vụ gắn tenant_id trỏ về đây.
+
+    Vòng đời/billing theo thời gian: kích hoạt → hết hạn sau 365 ngày → cần renew;
+    Super-Admin bật lại (is_enabled + gia hạn valid_until) sau khi trường thanh toán.
+    """
+    __tablename__ = "tenants"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    code: Mapped[str] = mapped_column(String(50), unique=True, index=True)  # dùng cho subdomain
+    name: Mapped[str] = mapped_column(String(255))
+    status: Mapped[str] = mapped_column(String(50), default="active")  # active|suspended|trial|offboarding
+    plan: Mapped[str] = mapped_column(String(50), default="standard")
+    contact_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    settings_json: Mapped[dict] = mapped_column(JSON, default=dict)  # branding/locale/feature flags
+    # Vòng đời sử dụng
+    is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)   # Super-Admin bật/tắt sau thanh toán
+    activated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    valid_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # hết hạn → cần renew
+    # Giới hạn tài nguyên (tùy chọn)
+    max_programs: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    max_users: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    llm_daily_token_quota: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
