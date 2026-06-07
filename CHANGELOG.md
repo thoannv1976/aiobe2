@@ -1,5 +1,10 @@
 # Nhật ký phiên bản — AIOBE / OBE-AUN-QA
 
+## v1.5.0 — 2026-06-09 — Hoàn tất multi-tenant (Nhóm C C5)
+
+- **C5 — Vận hành & tuân thủ**: export dữ liệu theo trường (zip JSON, backup/bàn giao), **offboarding** (xóa cứng toàn bộ dữ liệu một trường, cần xác nhận), **script `verify_rls.py`** pen-test cô lập RLS trên Postgres, quan trắc theo trường (audit/usage/jobs gắn `tenant_id`), trang `/admin/tenants` thêm Export & Xóa.
+- **Nhóm C hoàn tất (C0–C5)**: 1 codebase phục vụ nhiều trường — cô lập 2 lớp (app + RLS), subdomain, Super-Admin, billing theo thời gian, key/chi phí/hạn mức/fairness theo trường, export/offboarding.
+
 ## v1.4.0 — 2026-06-08 — Đa người thuê (Nhóm C: multi-tenant)
 
 > Chuyển từ "1 trường = 1 triển khai" sang "1 codebase phục vụ nhiều trường" (kế hoạch: `docs/PLAN_MULTITENANT.md`).
