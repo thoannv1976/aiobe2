@@ -1,6 +1,9 @@
 """Điểm vào FastAPI cho hệ thống OBE/AUN-QA."""
-from fastapi import FastAPI
+import logging
+
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.config import settings
 from app.core import tenant as _tenant  # noqa: F401  (đăng ký listener cô lập tenant)
@@ -77,6 +80,15 @@ def _cache_default_tenant() -> None:
             set_default_tenant_id(int(tid))
     except Exception:  # noqa: BLE001
         pass  # bảng tenants có thể chưa tồn tại (fresh dev) — bỏ qua
+
+
+@app.exception_handler(Exception)
+async def _unhandled_exception(request: Request, exc: Exception) -> JSONResponse:
+    """Ghi TRACEBACK đầy đủ ra log (Cloud Logging bắt được) để chẩn đoán lỗi 500."""
+    logging.getLogger("uvicorn.error").exception(
+        "Unhandled error: %s %s", request.method, request.url.path
+    )
+    return JSONResponse(status_code=500, content={"detail": "Internal Server Error"})
 
 
 @app.get("/api/health")

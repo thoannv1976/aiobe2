@@ -47,6 +47,10 @@ class Settings(BaseSettings):
 
     # Multi-tenant (Nhóm C): tên miền gốc để suy tenant theo subdomain <code>.eduobe.vn
     base_domain: str = "eduobe.vn"
+    # Bật ENFORCE Row-Level Security ở tầng DB (Postgres). Mặc định TẮT:
+    # cô lập dữ liệu đã được đảm bảo ở tầng ứng dụng (C1). Chỉ bật sau khi đã kiểm thử
+    # RLS trên Postgres staging (tránh sự cố SET LOCAL/pool gây 500 ở production).
+    rls_enabled: bool = False
     # Khóa mã hóa secret (API key AI của trường) khi lưu DB. Trống = lưu nguyên bản (dev).
     # Production nên đặt; có thể thay bằng Cloud KMS sau (envelope encryption).
     encryption_key: str = ""

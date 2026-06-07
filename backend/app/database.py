@@ -66,5 +66,9 @@ def get_db() -> Generator[Session, None, None]:
     db = SessionLocal()
     try:
         yield db
+    except Exception:
+        # Rollback để một lỗi không để lại transaction "aborted" trên connection dùng chung (pool).
+        db.rollback()
+        raise
     finally:
         db.close()

@@ -38,7 +38,9 @@ def set_session_tenant(db: Session, tenant_id: int | None) -> None:
     if tenant_id is None:
         return
     db.info["tenant_id"] = tenant_id
-    if db.bind is not None and db.bind.dialect.name == "postgresql":
+    # Chỉ áp app.tenant_id cho RLS khi đã BẬT (đã kiểm thử trên Postgres). Lớp cô lập chính
+    # là auto-filter tầng ứng dụng (do_orm_execute) — luôn hoạt động bất kể RLS.
+    if settings.rls_enabled and db.bind is not None and db.bind.dialect.name == "postgresql":
         # SET LOCAL áp cho transaction hiện tại; after_begin sẽ áp lại cho transaction sau.
         db.execute(text(f"SET LOCAL app.tenant_id = {int(tenant_id)}"))
 
@@ -87,7 +89,7 @@ def _assign_tenant_on_insert(session, _ctx, _instances) -> None:  # noqa: ANN001
 @event.listens_for(Session, "after_begin")
 def _set_rls_on_begin(session, _transaction, connection) -> None:  # noqa: ANN001
     """Mỗi transaction mới trên Postgres: áp lại app.tenant_id cho RLS (nếu đã biết tenant)."""
-    if connection.dialect.name != "postgresql":
+    if not settings.rls_enabled or connection.dialect.name != "postgresql":
         return
     tid = session.info.get("tenant_id")
     if tid is not None:
