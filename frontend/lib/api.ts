@@ -22,6 +22,38 @@ export function getUser(): any | null {
   return u ? JSON.parse(u) : null;
 }
 
+// Mã trường (tenant) để gửi header X-Tenant — cho phép test trường con không cần subdomain thật.
+// Ưu tiên ?tenant=<mã> trên URL (ghi nhớ vào localStorage); ?tenant= rỗng để bỏ chọn.
+export function getTenantCode(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const params = new URLSearchParams(window.location.search);
+    if (params.has("tenant")) {
+      const q = (params.get("tenant") || "").trim().toLowerCase();
+      if (q) localStorage.setItem("obe_tenant", q);
+      else localStorage.removeItem("obe_tenant");
+    }
+    return localStorage.getItem("obe_tenant");
+  } catch {
+    return null;
+  }
+}
+
+export function setTenantCode(code: string | null) {
+  if (typeof window === "undefined") return;
+  if (code) localStorage.setItem("obe_tenant", code.trim().toLowerCase());
+  else localStorage.removeItem("obe_tenant");
+}
+
+function authHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  const h: Record<string, string> = { ...extra };
+  const token = getToken();
+  if (token) h["Authorization"] = `Bearer ${token}`;
+  const tenant = getTenantCode();
+  if (tenant) h["X-Tenant"] = tenant;
+  return h;
+}
+
 async function handle(res: Response) {
   if (!res.ok) {
     let detail: any = res.statusText;
@@ -44,12 +76,10 @@ async function safeFetch(url: string, init: RequestInit): Promise<Response> {
 }
 
 export async function api(path: string, opts: RequestInit = {}) {
-  const token = getToken();
-  const headers: Record<string, string> = {
+  const headers = authHeaders({
     "Content-Type": "application/json",
     ...(opts.headers as Record<string, string>),
-  };
-  if (token) headers["Authorization"] = `Bearer ${token}`;
+  });
   const res = await safeFetch(`${API_BASE}${path}`, { ...opts, headers });
   return handle(res);
 }
@@ -58,10 +88,7 @@ export async function api(path: string, opts: RequestInit = {}) {
 export async function apiPaged<T = any>(
   path: string,
 ): Promise<{ items: T[]; total: number }> {
-  const token = getToken();
-  const headers: Record<string, string> = {};
-  if (token) headers["Authorization"] = `Bearer ${token}`;
-  const res = await fetch(`${API_BASE}${path}`, { headers });
+  const res = await safeFetch(`${API_BASE}${path}`, { headers: authHeaders() });
   const items = await handle(res);
   const total = Number(res.headers.get("X-Total-Count") ?? (Array.isArray(items) ? items.length : 0));
   return { items, total };
@@ -69,12 +96,9 @@ export async function apiPaged<T = any>(
 
 // Upload multipart/form-data: KHÔNG set Content-Type để browser tự thêm boundary.
 export async function apiUpload(path: string, formData: FormData) {
-  const token = getToken();
-  const headers: Record<string, string> = {};
-  if (token) headers["Authorization"] = `Bearer ${token}`;
-  const res = await fetch(`${API_BASE}${path}`, {
+  const res = await safeFetch(`${API_BASE}${path}`, {
     method: "POST",
-    headers,
+    headers: authHeaders(),
     body: formData,
   });
   return handle(res);
@@ -82,9 +106,12 @@ export async function apiUpload(path: string, formData: FormData) {
 
 export async function login(email: string, password: string) {
   const body = new URLSearchParams({ username: email, password });
+  const tenant = getTenantCode();
+  const headers: Record<string, string> = { "Content-Type": "application/x-www-form-urlencoded" };
+  if (tenant) headers["X-Tenant"] = tenant;
   const res = await safeFetch(`${API_BASE}/api/auth/login`, {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    headers,
     body,
   });
   const data = await handle(res);

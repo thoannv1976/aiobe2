@@ -1,7 +1,7 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { login } from "@/lib/api";
+import { getTenantCode, login, setTenantCode } from "@/lib/api";
 
 const ACCOUNTS = [
   ["admin@obe.vn", "admin123", "Admin"],
@@ -14,7 +14,11 @@ export default function LoginPage() {
   const [email, setEmail] = useState("manager@obe.vn");
   const [password, setPassword] = useState("manager123");
   const [err, setErr] = useState("");
+  const [tenant, setTenant] = useState<string | null>(null);
   const router = useRouter();
+
+  // Đọc ?tenant=<mã> (ghi nhớ) để đăng nhập đúng trường con khi chưa có subdomain thật.
+  useEffect(() => setTenant(getTenantCode()), []);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -30,6 +34,22 @@ export default function LoginPage() {
   return (
     <div className="mx-auto mt-10 max-w-md rounded-lg border bg-white p-8 shadow-sm">
       <h1 className="mb-6 text-2xl font-bold">Đăng nhập</h1>
+      {tenant ? (
+        <div className="mb-4 rounded border border-indigo-200 bg-indigo-50 p-2 text-xs text-indigo-800">
+          Đang đăng nhập vào trường: <b>{tenant}</b>
+          <button
+            onClick={() => { setTenantCode(null); setTenant(null); }}
+            className="ml-2 rounded bg-white px-2 py-0.5 underline"
+          >
+            Bỏ chọn (về nền tảng)
+          </button>
+        </div>
+      ) : (
+        <p className="mb-4 text-xs text-slate-400">
+          Mẹo: thêm <code>?tenant=&lt;mã trường&gt;</code> vào URL để đăng nhập đúng trường con
+          (vd <code>?tenant=neu</code>). Để trống = nền tảng / trường mặc định.
+        </p>
+      )}
       <form onSubmit={submit} className="space-y-4">
         <input
           className="w-full rounded border p-2"
