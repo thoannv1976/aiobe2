@@ -28,17 +28,15 @@ def run() -> None:
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()
     try:
-        if db.query(User).count() > 0:
-            print("Đã có dữ liệu — bỏ qua seed.")
-            return
-
-        # --- Tenant mặc định (multi-tenant): mọi dữ liệu seed gắn về tenant này ---
         from datetime import datetime, timedelta
 
         from app.core.tenant import set_default_tenant_id
         from app.models import Tenant
 
-        tenant = db.query(Tenant).filter(Tenant.code == "default").first()
+        existing_data = db.query(User).count() > 0
+
+        # --- Tenant mặc định (LUÔN đảm bảo tồn tại, kể cả khi DB đã có dữ liệu) ---
+        tenant = db.query(Tenant).filter(Tenant.code == "default").execution_options(skip_tenant=True).first()
         if not tenant:
             now = datetime.utcnow()
             tenant = Tenant(
@@ -47,15 +45,22 @@ def run() -> None:
             )
             db.add(tenant)
             db.flush()
-        # Gắn ngữ cảnh tenant cho session → before_flush tự gán tenant_id cho mọi bản ghi seed.
         db.info["tenant_id"] = tenant.id
         set_default_tenant_id(tenant.id)
 
-        # --- Người dùng ---
-        # Super-Admin nền tảng (vận hành đa trường) — KHÔNG thuộc trường nào về mặt nghiệp vụ,
-        # nhưng vẫn gắn tenant mặc định để thỏa NOT NULL trên Postgres.
-        db.add(User(name="Super Admin", email="super@obe.vn",
-                    password_hash=hash_password("super123"), role="super_admin"))
+        # --- Super-Admin nền tảng (LUÔN đảm bảo tồn tại để vận hành đa trường) ---
+        if not db.query(User).filter(User.email == "super@obe.vn").execution_options(skip_tenant=True).first():
+            db.add(User(name="Super Admin", email="super@obe.vn",
+                        password_hash=hash_password("super123"), role="super_admin",
+                        tenant_id=tenant.id))
+
+        # Nếu DB đã có dữ liệu (production) → chỉ bổ sung tenant mặc định + super-admin rồi dừng.
+        if existing_data:
+            db.commit()
+            print("Đã có dữ liệu — đảm bảo tenant mặc định + super-admin (super@obe.vn/super123).")
+            return
+
+        # --- Người dùng mẫu (chỉ khi seed lần đầu) ---
         users = [
             User(name="Quản trị", email="admin@obe.vn", password_hash=hash_password("admin123"), role="admin"),
             User(name="Trưởng khoa", email="manager@obe.vn", password_hash=hash_password("manager123"), role="program_manager"),

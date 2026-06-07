@@ -61,10 +61,21 @@ def get_current_user(
 
 def require_roles(*roles: Role) -> Callable:
     allowed = {r.value for r in roles}
+    super_only = Role.SUPER_ADMIN in roles and Role.ADMIN not in roles
 
     def checker(user: User = Depends(get_current_user)) -> User:
-        if user.role in (Role.ADMIN.value, Role.SUPER_ADMIN.value):
-            return user  # admin trường / super-admin nền tảng: toàn quyền
+        # Super-Admin nền tảng: toàn quyền.
+        if user.role == Role.SUPER_ADMIN.value:
+            return user
+        # Endpoint chỉ dành Super-Admin (vd quản trị tenant) → admin trường KHÔNG được vào.
+        if super_only:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Chỉ Super-Admin nền tảng mới được thực hiện thao tác này",
+            )
+        # Admin của một trường: toàn quyền TRONG PHẠM VI trường.
+        if user.role == Role.ADMIN.value:
+            return user
         if user.role not in allowed:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,

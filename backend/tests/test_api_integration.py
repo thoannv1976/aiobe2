@@ -787,3 +787,26 @@ def test_c5_export_and_delete_tenant(client):
     assert client.get(f"/api/tenants/{tid}", headers=sh).status_code == 404
     assert client.post("/api/auth/login", data={"username": "adm@delme1.vn", "password": "pw"},
                        headers={"X-Tenant": "delme1"}).status_code == 401
+
+
+def test_tenant_admin_cannot_manage_tenants(client):
+    """Bảo mật: admin TRƯỜNG không được truy cập quản trị tenant (chỉ Super-Admin)."""
+    from app.core.security import hash_password
+    from app.database import SessionLocal
+    from app.models import Tenant, User
+
+    db = SessionLocal()
+    t = db.query(Tenant).filter(Tenant.code == "secadm").execution_options(skip_tenant=True).first()
+    if not t:
+        t = Tenant(code="secadm", name="Sec Adm")
+        db.add(t); db.commit()
+    if not db.query(User).filter(User.email == "adm@secadm.vn").execution_options(skip_tenant=True).first():
+        db.add(User(name="A", email="adm@secadm.vn", password_hash=hash_password("pw"),
+                    role="admin", tenant_id=t.id))
+        db.commit()
+    db.close()
+    tok = client.post("/api/auth/login", data={"username": "adm@secadm.vn", "password": "pw"},
+                      headers={"X-Tenant": "secadm"}).json()["access_token"]
+    # Admin trường: 403 với quản trị tenant; nhưng vẫn vào được khu admin trường (vd /api/api-keys).
+    assert client.get("/api/tenants", headers={"Authorization": f"Bearer {tok}"}).status_code == 403
+    assert client.get("/api/api-keys", headers={"Authorization": f"Bearer {tok}"}).status_code == 200

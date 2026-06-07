@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { api, getToken } from "@/lib/api";
+import { api, getToken, getUser } from "@/lib/api";
 
 interface User {
   id: number;
@@ -203,9 +203,11 @@ export default function AdminPage() {
           <a href="/admin/llm-cost" className="rounded bg-emerald-600 px-3 py-2 text-sm text-white">
             💰 Chi phí AI
           </a>
-          <a href="/admin/tenants" className="rounded bg-slate-800 px-3 py-2 text-sm text-white">
-            🏛 Quản trị nền tảng (trường)
-          </a>
+          {getUser()?.role === "super_admin" && (
+            <a href="/admin/tenants" className="rounded bg-slate-800 px-3 py-2 text-sm text-white">
+              🏛 Quản trị nền tảng (trường)
+            </a>
+          )}
         </div>
       </div>
 
