@@ -748,3 +748,42 @@ def test_c4_per_tenant_quota(client, monkeypatch):
     with llm_scope(tenant_id=tid):
         with pytest.raises(llm_mod.LLMQuotaExceeded):
             llm_mod.llm_complete("s", "u")
+
+
+def test_c5_export_and_delete_tenant(client):
+    """C5: Super-Admin export dữ liệu trường (zip JSON) + xóa cứng trường (cần confirm)."""
+    import io as _io
+    import json as _json
+    import zipfile as _zip
+
+    from app.core.security import hash_password
+    from app.database import SessionLocal
+    from app.models import User
+
+    db = SessionLocal()
+    if not db.query(User).filter(User.email == "super5@c5.vn").first():
+        db.add(User(name="S5", email="super5@c5.vn", password_hash=hash_password("pw"), role="super_admin"))
+        db.commit()
+    db.close()
+    sh = {"Authorization": f"Bearer {client.post('/api/auth/login', data={'username':'super5@c5.vn','password':'pw'}).json()['access_token']}"}
+
+    tid = client.post("/api/tenants", headers=sh, json={
+        "code": "delme1", "name": "Del Me", "admin_email": "adm@delme1.vn", "admin_password": "pw"}).json()["id"]
+    ah = {"Authorization": f"Bearer {client.post('/api/auth/login', data={'username':'adm@delme1.vn','password':'pw'}, headers={'X-Tenant':'delme1'}).json()['access_token']}"}
+    client.post("/api/programs", json={"name": "PXDEL", "code": "PXDEL"}, headers=ah)
+
+    # Export → zip có programs.json chứa CTĐT của trường.
+    r = client.get(f"/api/tenants/{tid}/export", headers=sh)
+    assert r.status_code == 200, r.text
+    zf = _zip.ZipFile(_io.BytesIO(r.content))
+    assert "programs.json" in zf.namelist() and "manifest.json" in zf.namelist()
+    progs = _json.loads(zf.read("programs.json"))
+    assert any(p["code"] == "PXDEL" for p in progs)
+
+    # Xóa cần ?confirm=<mã trường>.
+    assert client.delete(f"/api/tenants/{tid}", headers=sh).status_code == 400
+    assert client.delete(f"/api/tenants/{tid}?confirm=delme1", headers=sh).status_code == 204
+    # Trường biến mất + admin của trường không đăng nhập được nữa.
+    assert client.get(f"/api/tenants/{tid}", headers=sh).status_code == 404
+    assert client.post("/api/auth/login", data={"username": "adm@delme1.vn", "password": "pw"},
+                       headers={"X-Tenant": "delme1"}).status_code == 401

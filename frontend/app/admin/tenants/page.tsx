@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { api, getToken, getUser } from "@/lib/api";
+import { api, API_BASE, getToken, getUser } from "@/lib/api";
 
 interface Tenant {
   id: number;
@@ -68,6 +68,38 @@ export default function AdminTenantsPage() {
     setErr("");
     try {
       await api(`/api/tenants/${t.id}/enable`, { method: "POST", body: JSON.stringify({ valid_days: 365 }) });
+      load();
+    } catch (e: any) {
+      setErr(e.message);
+    }
+  }
+
+  async function exportTenant(t: Tenant) {
+    setErr("");
+    try {
+      const res = await fetch(`${API_BASE}/api/tenants/${t.id}/export`, {
+        headers: { Authorization: `Bearer ${getToken()}` },
+      });
+      if (!res.ok) throw new Error("Không export được");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `tenant_${t.code}_export.zip`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      setErr(e.message);
+    }
+  }
+
+  async function removeTenant(t: Tenant) {
+    const ans = prompt(`XÓA VĨNH VIỄN toàn bộ dữ liệu trường "${t.name}". Gõ lại mã "${t.code}" để xác nhận:`);
+    if (ans !== t.code) return;
+    setErr("");
+    try {
+      await api(`/api/tenants/${t.id}?confirm=${encodeURIComponent(t.code)}`, { method: "DELETE" });
+      setMsg(`Đã xóa trường "${t.name}".`);
       load();
     } catch (e: any) {
       setErr(e.message);
@@ -163,10 +195,16 @@ export default function AdminTenantsPage() {
                       Gia hạn 365 ngày
                     </button>
                     {t.is_enabled && (
-                      <button onClick={() => suspend(t)} className="rounded bg-red-100 px-2 py-1 text-xs text-red-700">
+                      <button onClick={() => suspend(t)} className="mr-2 rounded bg-amber-100 px-2 py-1 text-xs text-amber-700">
                         Tạm ngừng
                       </button>
                     )}
+                    <button onClick={() => exportTenant(t)} className="mr-2 rounded bg-slate-100 px-2 py-1 text-xs hover:bg-slate-200">
+                      Export
+                    </button>
+                    <button onClick={() => removeTenant(t)} className="rounded bg-red-600 px-2 py-1 text-xs text-white">
+                      Xóa
+                    </button>
                   </td>
                 </tr>
               );

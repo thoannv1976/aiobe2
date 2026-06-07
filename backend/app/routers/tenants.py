@@ -1,11 +1,15 @@
-"""Quản trị tenant (trường) — chỉ Super-Admin nền tảng (Nhóm C / C3).
+"""Quản trị tenant (trường) — chỉ Super-Admin nền tảng (Nhóm C / C3–C5).
 
-Cấp phát, gia hạn (renew sau thanh toán), tạm ngừng, cập nhật branding. Kèm endpoint
-công khai /tenant/branding để frontend hiển thị logo/tên theo subdomain.
+Cấp phát, gia hạn (renew sau thanh toán), tạm ngừng, cập nhật branding; export & offboarding
+(xóa) dữ liệu theo trường. Kèm endpoint công khai /tenant/branding.
 """
+import io
+import json
+import zipfile
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -149,3 +153,73 @@ def branding(request: Request, db: Session = Depends(get_db)):
         "logo_url": s.get("logo_url"), "color": s.get("color"),
         "active": t.is_enabled, "valid_until": t.valid_until.isoformat() if t.valid_until else None,
     }
+
+
+# ---------------------------------------------------------------------------
+# C5: Export (backup/offboarding) + xóa toàn bộ dữ liệu một trường
+# ---------------------------------------------------------------------------
+# Thứ tự XÓA: con trước, cha sau (tránh vi phạm khóa ngoại).
+_DELETE_ORDER = [
+    "exam_question", "exams", "exam_matrices", "questions",
+    "lesson_plan_clo", "lesson_plans", "assessment_clo", "assessments",
+    "clo_plo", "clos", "course_outlines", "chapter_clo", "chapters", "textbooks",
+    "lectures", "course_plo", "courses", "pis", "plos", "programs",
+    "extractions", "documents", "llm_usage", "jobs", "audit_logs", "api_keys",
+    "assignments", "users",
+]
+
+
+def _row_to_dict(obj) -> dict:
+    out = {}
+    for c in obj.__table__.columns:
+        v = getattr(obj, c.name)
+        out[c.name] = v.isoformat() if isinstance(v, datetime) else v
+    return out
+
+
+@router.get("/tenants/{tid}/export")
+def export_tenant(tid: int, db: Session = Depends(get_db), _: User = Depends(SUPER)):
+    """Xuất TOÀN BỘ dữ liệu một trường ra zip JSON (backup/bàn giao khi offboarding)."""
+    from app.core.tenant import _tenant_models
+
+    t = db.query(Tenant).filter(Tenant.id == tid).execution_options(skip_tenant=True).first()
+    if not t:
+        raise HTTPException(404, "Không tìm thấy trường")
+    buf = io.BytesIO()
+    counts = {}
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("tenant.json", json.dumps(_out(t), ensure_ascii=False, indent=2))
+        for cls in _tenant_models():
+            rows = (
+                db.query(cls).filter(cls.tenant_id == tid)
+                .execution_options(skip_tenant=True).all()
+            )
+            counts[cls.__tablename__] = len(rows)
+            z.writestr(
+                f"{cls.__tablename__}.json",
+                json.dumps([_row_to_dict(r) for r in rows], ensure_ascii=False, indent=2),
+            )
+        z.writestr("manifest.json", json.dumps(
+            {"tenant": t.code, "exported_at": datetime.utcnow().isoformat(), "counts": counts},
+            ensure_ascii=False, indent=2))
+    buf.seek(0)
+    return StreamingResponse(
+        buf, media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename=tenant_{t.code}_export.zip"},
+    )
+
+
+@router.delete("/tenants/{tid}", status_code=204)
+def delete_tenant(tid: int, confirm: str = "", db: Session = Depends(get_db), user: User = Depends(SUPER)):
+    """XÓA CỨNG toàn bộ dữ liệu một trường (offboarding). Cần ?confirm=<mã trường> để xác nhận."""
+    from sqlalchemy import text
+
+    t = db.query(Tenant).filter(Tenant.id == tid).execution_options(skip_tenant=True).first()
+    if not t:
+        raise HTTPException(404, "Không tìm thấy trường")
+    if confirm != t.code:
+        raise HTTPException(400, f"Cần xác nhận: truyền ?confirm={t.code} để xóa vĩnh viễn.")
+    for table in _DELETE_ORDER:
+        db.execute(text(f"DELETE FROM {table} WHERE tenant_id = :tid").bindparams(tid=tid))
+    db.execute(text("DELETE FROM tenants WHERE id = :tid").bindparams(tid=tid))
+    db.commit()

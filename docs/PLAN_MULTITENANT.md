@@ -274,7 +274,15 @@ Lưu trong `tenants.settings_json` (+ bảng phụ nếu lớn):
   - **Chi phí theo trường**: `/api/llm-usage` thêm `by_tenant` (Super-Admin xem toàn nền tảng; admin trường chỉ thấy trường mình do auto-filter).
   - **Fairness job**: giới hạn số job nền đồng thời mỗi trường (`jobs_max_concurrency_per_tenant`).
   - **Tests**: per-tenant key + mã hóa khứ hồi + hạn mức theo tenant (65 passed). Không cần migration mới (dùng cột sẵn có).
-- ⏳ **C5**: export/offboarding + backup theo tenant + quan trắc gắn tenant + **pen-test cô lập trên Postgres staging** + load test đa tenant.
+- ✅ **C5 — Vận hành & tuân thủ**:
+  - **Export theo trường** (Super-Admin) `GET /api/tenants/{id}/export` → zip JSON toàn bộ dữ liệu trường (backup/bàn giao offboarding) + manifest.
+  - **Xóa cứng (offboarding)** `DELETE /api/tenants/{id}?confirm=<mã>` → xóa toàn bộ dữ liệu trường theo thứ tự con→cha; bắt buộc confirm.
+  - **Pen-test cô lập**: bộ test cô lập chéo (programs/PLO/key/quota/export-delete) trên SQLite; **script `scripts/verify_rls.py`** kiểm chứng RLS trên **Postgres staging** (chạy thật trên Postgres).
+  - **Quan trắc gắn tenant**: `audit_logs` + `llm_usage` + `jobs` đều gắn `tenant_id` (auto-set) → lọc/giám sát theo trường; dashboard chi phí `by_tenant`.
+  - **Frontend**: trang `/admin/tenants` thêm Export & Xóa.
+  - ⚠️ *Cần thực thi `verify_rls.py` + load test trên Postgres staging trước khi mở bán* (môi trường dev là SQLite).
+
+> **Nhóm C hoàn tất (C0–C5).** Còn lại là việc vận hành ngoài code: dựng Postgres staging, chạy `alembic upgrade head` + `verify_rls.py`, cấu hình DNS wildcard `*.eduobe.vn` + chứng chỉ, đặt `ENCRYPTION_KEY`/`BASE_DOMAIN`, rồi pen-test/load-test.
 
 ---
 
