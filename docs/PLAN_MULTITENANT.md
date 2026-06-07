@@ -267,7 +267,14 @@ Lưu trong `tenants.settings_json` (+ bảng phụ nếu lớn):
   - **Branding công khai** `GET /api/tenant/branding` theo subdomain.
   - **Frontend**: trang Super-Admin `/admin/tenants` (cấp phát/gia hạn/tạm ngừng); seed thêm `super@obe.vn`.
   - **Tests**: cấp phát + login scoped + branding + suspend→403 + enable→200 + cùng email 2 trường (63 passed).
-- ⏳ C4 → C5: theo §15 (key AI theo tenant + mã hóa KMS + hạn mức/chi phí theo tenant + fairness; rồi export/backup/quan trắc/pen-test).
+- ✅ **C4 — Key AI theo tenant + mã hóa + hạn mức/chi phí + fairness**:
+  - **Key AI mỗi trường tự nạp & dùng đúng key của mình**: `get_active_key`/`_resolve` chọn key theo tenant hiện tại (`current_tenant` = scope job hoặc tenant của request, đặt trong `get_current_user`). Quản lý key tại `/admin/ai` tự cô lập theo trường; bulk "tắt key khác" được lọc theo tenant.
+  - **Mã hóa key khi lưu** (`app/core/crypto.py`, Fernet/AES; tiền tố `enc:v1:`; tương thích ngược plaintext). Bật bằng `ENCRYPTION_KEY` (dev trống = nguyên bản). *(Có thể nâng lên Cloud KMS sau, cùng giao diện.)*
+  - **Hạn mức token/ngày theo TRƯỜNG** (`tenants.llm_daily_token_quota`, fallback cấu hình toàn cục) — chặn khi vượt.
+  - **Chi phí theo trường**: `/api/llm-usage` thêm `by_tenant` (Super-Admin xem toàn nền tảng; admin trường chỉ thấy trường mình do auto-filter).
+  - **Fairness job**: giới hạn số job nền đồng thời mỗi trường (`jobs_max_concurrency_per_tenant`).
+  - **Tests**: per-tenant key + mã hóa khứ hồi + hạn mức theo tenant (65 passed). Không cần migration mới (dùng cột sẵn có).
+- ⏳ **C5**: export/offboarding + backup theo tenant + quan trắc gắn tenant + **pen-test cô lập trên Postgres staging** + load test đa tenant.
 
 ---
 

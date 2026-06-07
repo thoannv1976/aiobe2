@@ -15,7 +15,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.core.llm_context import current_scope
+from app.core.llm_context import current_scope, current_tenant
 from app.database import SessionLocal
 from app.models import ApiKey, LlmUsage
 
@@ -47,14 +47,21 @@ class LLMQuotaExceeded(RuntimeError):
     """Vượt hạn mức token AI (theo chương trình)."""
 
 
-def get_active_key(db: Session | None = None) -> ApiKey | None:
-    """Lấy khóa API đang active. Tự mở session nếu không truyền."""
+def get_active_key(db: Session | None = None, tenant_id: int | str | None = "__auto__") -> ApiKey | None:
+    """Lấy khóa API đang active CỦA TRƯỜNG hiện tại (multi-tenant).
+
+    tenant_id mặc định lấy từ ngữ cảnh (current_tenant). Lọc tường minh theo tenant +
+    skip_tenant để xác định, không phụ thuộc trạng thái scoping của session truyền vào.
+    """
+    if tenant_id == "__auto__":
+        tenant_id = current_tenant()
     own = db is None
     db = db or SessionLocal()
     try:
-        return db.execute(
-            select(ApiKey).where(ApiKey.is_active == True)  # noqa: E712
-        ).scalars().first()
+        q = select(ApiKey).where(ApiKey.is_active == True)  # noqa: E712
+        if tenant_id is not None:
+            q = q.where(ApiKey.tenant_id == tenant_id)
+        return db.execute(q.execution_options(skip_tenant=True)).scalars().first()
     finally:
         if own:
             db.close()
@@ -81,14 +88,16 @@ def ai_status(db: Session | None = None) -> dict:
 
 
 def _resolve() -> tuple[str, str, str]:
-    """Trả (provider, api_key, model). Raise nếu chưa cấu hình."""
+    """Trả (provider, api_key, model) của TRƯỜNG hiện tại. Raise nếu chưa cấu hình."""
     key = get_active_key()
     if key:
-        return key.provider, key.api_key, key.model or DEFAULT_MODELS.get(key.provider, "")
+        from app.core.crypto import decrypt_secret
+
+        return key.provider, decrypt_secret(key.api_key), key.model or DEFAULT_MODELS.get(key.provider, "")
     if settings.anthropic_api_key:
         return "anthropic", settings.anthropic_api_key, settings.anthropic_model
     raise LLMNotConfigured(
-        "Chưa có API key AI nào được kích hoạt. Vui lòng liên hệ quản trị viên cấu hình API."
+        "Trường chưa cấu hình API key AI. Vui lòng vào Quản trị → Cấu hình API AI để nạp key."
     )
 
 
@@ -154,10 +163,11 @@ def _record_usage(provider: str, model: str, usage: dict) -> None:
     """Ghi LlmUsage theo scope hiện tại (best-effort, không chặn luồng chính)."""
     scope = current_scope()
     db = SessionLocal()
+    tid = current_tenant()
     try:
         # Gắn tenant cho session ghi usage → before_flush gán tenant_id (hoặc fallback mặc định).
-        if scope.get("tenant_id"):
-            db.info["tenant_id"] = scope["tenant_id"]
+        if tid:
+            db.info["tenant_id"] = tid
         db.add(LlmUsage(
             provider=provider, model=model,
             prompt_tokens=usage.get("prompt", 0),
@@ -176,23 +186,39 @@ def _record_usage(provider: str, model: str, usage: dict) -> None:
 
 
 def _check_quota() -> None:
-    """Chặn nếu chương trình đã vượt hạn mức token trong ngày (nếu có cấu hình)."""
-    quota = settings.llm_daily_token_quota_per_program
+    """Chặn nếu TRƯỜNG (ưu tiên) hoặc chương trình đã vượt hạn mức token trong ngày."""
+    from app.models import Tenant
+
+    start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    tid = current_tenant()
     scope = current_scope()
     pid = scope.get("program_id")
-    if not quota or not pid:
-        return
-    start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
     db = SessionLocal()
     try:
-        used = db.query(func.coalesce(func.sum(LlmUsage.total_tokens), 0)).filter(
-            LlmUsage.program_id == pid, LlmUsage.created_at >= start
-        ).scalar() or 0
-        if used >= quota:
-            raise LLMQuotaExceeded(
-                f"Chương trình đã dùng {used:,}/{quota:,} token AI trong ngày. "
-                "Vui lòng thử lại ngày mai hoặc liên hệ quản trị tăng hạn mức."
-            )
+        # 1) Hạn mức theo TRƯỜNG (tenants.llm_daily_token_quota; fallback cấu hình toàn cục).
+        if tid:
+            t = db.query(Tenant).filter(Tenant.id == tid).execution_options(skip_tenant=True).first()
+            quota = (t.llm_daily_token_quota if t and t.llm_daily_token_quota
+                     else settings.llm_daily_token_quota_per_program)
+            if quota:
+                used = db.query(func.coalesce(func.sum(LlmUsage.total_tokens), 0)).filter(
+                    LlmUsage.tenant_id == tid, LlmUsage.created_at >= start
+                ).scalar() or 0
+                if used >= quota:
+                    raise LLMQuotaExceeded(
+                        f"Trường đã dùng {used:,}/{quota:,} token AI trong ngày. "
+                        "Vui lòng thử lại ngày mai hoặc liên hệ tăng hạn mức."
+                    )
+        # 2) Hạn mức theo chương trình (giữ tương thích cấu hình toàn cục).
+        quota_p = settings.llm_daily_token_quota_per_program
+        if quota_p and pid:
+            used = db.query(func.coalesce(func.sum(LlmUsage.total_tokens), 0)).filter(
+                LlmUsage.program_id == pid, LlmUsage.created_at >= start
+            ).scalar() or 0
+            if used >= quota_p:
+                raise LLMQuotaExceeded(
+                    f"Chương trình đã dùng {used:,}/{quota_p:,} token AI trong ngày."
+                )
     finally:
         db.close()
 

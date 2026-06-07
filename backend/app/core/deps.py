@@ -5,6 +5,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 
+from app.core.llm_context import set_request_tenant
 from app.core.security import decode_token
 from app.core.tenant import set_session_tenant
 from app.database import get_db
@@ -33,8 +34,11 @@ def get_current_user(
     )
     if not user or not user.is_active:
         raise creds_exc
+    # Gắn tenant của request cho lớp LLM (chọn đúng key/quota của trường).
+    set_request_tenant(user.tenant_id)
     # Super-Admin nền tảng: KHÔNG gắn tenant → thao tác xuyên trường (quản trị tenant).
     if user.role == Role.SUPER_ADMIN.value:
+        set_request_tenant(None)
         return user
     # Người dùng của một trường: kiểm tra hiệu lực (hạn dùng) + cô lập theo tenant.
     if user.tenant_id is not None:

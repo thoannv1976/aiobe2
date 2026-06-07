@@ -23,6 +23,20 @@ _log = logging.getLogger("uvicorn.error")
 
 HANDLERS: dict[str, Callable] = {}
 
+# Công bằng tài nguyên: giới hạn số job chạy đồng thời MỖI TRƯỜNG (tránh 1 trường chiếm hết).
+_tenant_sems: dict[int, threading.Semaphore] = {}
+_sems_lock = threading.Lock()
+
+
+def _tenant_semaphore(tenant_id) -> threading.Semaphore:
+    key = int(tenant_id) if tenant_id is not None else 0
+    with _sems_lock:
+        sem = _tenant_sems.get(key)
+        if sem is None:
+            sem = threading.Semaphore(max(1, settings.jobs_max_concurrency_per_tenant))
+            _tenant_sems[key] = sem
+        return sem
+
 
 def register(job_type: str):
     def deco(fn: Callable):
@@ -72,8 +86,11 @@ def run_job(job_id: int) -> None:
             job.error = f"Không có handler cho job '{job.type}'"
             db.commit()
             return
-        with llm_scope(user_id=job.created_by, program_id=job.program_id,
-                       course_id=job.course_id, job_id=job.id, tenant_id=job.tenant_id):
+        # Giới hạn đồng thời theo trường (công bằng tài nguyên).
+        with _tenant_semaphore(job.tenant_id), llm_scope(
+            user_id=job.created_by, program_id=job.program_id,
+            course_id=job.course_id, job_id=job.id, tenant_id=job.tenant_id,
+        ):
             result = handler(db, job)
         job.status = "done"
         job.progress = 100

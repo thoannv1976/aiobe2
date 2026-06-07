@@ -44,6 +44,11 @@ class Settings(BaseSettings):
 
     # Multi-tenant (Nhóm C): tên miền gốc để suy tenant theo subdomain <code>.eduobe.vn
     base_domain: str = "eduobe.vn"
+    # Khóa mã hóa secret (API key AI của trường) khi lưu DB. Trống = lưu nguyên bản (dev).
+    # Production nên đặt; có thể thay bằng Cloud KMS sau (envelope encryption).
+    encryption_key: str = ""
+    # Công bằng tài nguyên: số job nền chạy đồng thời tối đa mỗi trường.
+    jobs_max_concurrency_per_tenant: int = 2
 
     # Pool kết nối DB (Postgres/Cloud SQL). Bỏ qua với SQLite.
     db_pool_size: int = 5          # số kết nối thường trực mỗi instance

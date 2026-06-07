@@ -9,6 +9,18 @@ import contextlib
 import contextvars
 
 _ctx: contextvars.ContextVar[dict] = contextvars.ContextVar("llm_ctx", default={})
+# Tenant của REQUEST hiện tại (đặt trong get_current_user) — để lớp LLM chọn ĐÚNG key/quota
+# của trường cho cả những lời gọi không bọc llm_scope. Job nền dùng llm_scope(tenant_id=...).
+_request_tenant: contextvars.ContextVar[int | None] = contextvars.ContextVar("req_tenant", default=None)
+
+
+def set_request_tenant(tenant_id: int | None) -> None:
+    _request_tenant.set(tenant_id)
+
+
+def current_tenant() -> int | None:
+    """Tenant áp dụng cho lời gọi LLM: ưu tiên llm_scope, sau đó tenant của request."""
+    return _ctx.get().get("tenant_id") or _request_tenant.get()
 
 
 @contextlib.contextmanager

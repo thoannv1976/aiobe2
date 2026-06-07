@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.core.crypto import decrypt_secret, encrypt_secret
 from app.core.deps import get_current_user, require_roles
 from app.database import get_db
 from app.models import ApiKey, Role, User
@@ -40,10 +41,17 @@ def _mask(key: str) -> str:
     return f"{key[:6]}…{key[-4:]}" if len(key) > 12 else "••••"
 
 
+def _deactivate_others(db: Session, tenant_id) -> None:
+    """Tắt mọi key đang active CỦA TRƯỜNG này (bulk UPDATE không tự lọc tenant → lọc tường minh)."""
+    db.query(ApiKey).filter(ApiKey.tenant_id == tenant_id).update(
+        {ApiKey.is_active: False}, synchronize_session=False
+    )
+
+
 def _out(k: ApiKey) -> dict:
     return {
         "id": k.id, "provider": k.provider, "name": k.name,
-        "api_key_masked": _mask(k.api_key),
+        "api_key_masked": _mask(decrypt_secret(k.api_key)),
         "model": k.model or DEFAULT_MODELS.get(k.provider, ""),
         "is_active": k.is_active,
         "created_at": k.created_at.isoformat() if k.created_at else None,
@@ -90,9 +98,29 @@ def llm_usage(days: int = 30, db: Session = Depends(get_db), _: User = Depends(A
         for pid, tok, cost, c in rows
     ]
     by_program.sort(key=lambda x: -x["tokens"])
+
+    # Phân rã theo TRƯỜNG (hữu ích cho Super-Admin; tenant-admin chỉ thấy trường mình do auto-filter).
+    from app.models import Tenant
+
+    trows = (
+        db.query(LlmUsage.tenant_id,
+                 func.coalesce(func.sum(LlmUsage.total_tokens), 0),
+                 func.coalesce(func.sum(LlmUsage.est_cost_usd), 0.0),
+                 func.count(LlmUsage.id))
+        .filter(LlmUsage.created_at >= since)
+        .group_by(LlmUsage.tenant_id).all()
+    )
+    tnames = {t.id: t.name for t in db.query(Tenant).execution_options(skip_tenant=True).all()}
+    by_tenant = sorted(
+        [{"tenant_id": tid, "tenant_name": tnames.get(tid, "(không gắn)"),
+          "tokens": int(tok), "est_cost_usd": round(float(cost), 4), "calls": int(c)}
+         for tid, tok, cost, c in trows],
+        key=lambda x: -x["tokens"],
+    )
     return {
         "days": days, "calls": calls, "total_tokens": int(total_tokens),
-        "est_cost_usd": round(float(total_cost), 4), "by_program": by_program,
+        "est_cost_usd": round(float(total_cost), 4),
+        "by_program": by_program, "by_tenant": by_tenant,
     }
 
 
@@ -110,13 +138,13 @@ def create_key(payload: ApiKeyIn, db: Session = Depends(get_db), user: User = De
         raise HTTPException(400, "Thiếu API key")
     obj = ApiKey(
         provider=payload.provider, name=payload.name,
-        api_key=payload.api_key.strip(),
+        api_key=encrypt_secret(payload.api_key.strip()),
         model=payload.model or DEFAULT_MODELS.get(payload.provider),
         is_active=payload.is_active, created_by=user.id,
     )
     if payload.is_active:
-        # chỉ một key active tại một thời điểm
-        db.query(ApiKey).update({ApiKey.is_active: False})
+        # chỉ một key active tại một thời điểm — TRONG PHẠM VI TRƯỜNG
+        _deactivate_others(db, user.tenant_id)
     db.add(obj)
     db.commit()
     db.refresh(obj)
@@ -134,10 +162,10 @@ def update_key(kid: int, payload: ApiKeyUpdate, db: Session = Depends(get_db), u
     if payload.model is not None:
         obj.model = payload.model
     if payload.api_key:  # chỉ đổi khi có giá trị thực
-        obj.api_key = payload.api_key.strip()
+        obj.api_key = encrypt_secret(payload.api_key.strip())
     if payload.is_active is not None:
         if payload.is_active:
-            db.query(ApiKey).update({ApiKey.is_active: False})
+            _deactivate_others(db, user.tenant_id)
         obj.is_active = payload.is_active
     db.commit()
     db.refresh(obj)
@@ -150,7 +178,7 @@ def activate_key(kid: int, db: Session = Depends(get_db), user: User = Depends(A
     obj = db.get(ApiKey, kid)
     if not obj:
         raise HTTPException(404, "Không tìm thấy API key")
-    db.query(ApiKey).update({ApiKey.is_active: False})
+    _deactivate_others(db, user.tenant_id)
     obj.is_active = True
     db.commit()
     log_action(db, user.id, "api_key", kid, "activate")
@@ -162,7 +190,7 @@ def test_key(kid: int, db: Session = Depends(get_db), _: User = Depends(ADMIN)):
     obj = db.get(ApiKey, kid)
     if not obj:
         raise HTTPException(404, "Không tìm thấy API key")
-    ok, msg = verify_key(obj.provider, obj.api_key, obj.model)
+    ok, msg = verify_key(obj.provider, decrypt_secret(obj.api_key), obj.model)
     return {"ok": ok, "message": msg}
 
 

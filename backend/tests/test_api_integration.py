@@ -690,3 +690,61 @@ def test_c3_tenant_scoped_login_same_email(client):
     # Đăng nhập cùng email nhưng khác subdomain → đều thành công (chọn đúng user theo tenant).
     assert client.post("/api/auth/login", data={"username": "dup@same.vn", "password": "pw"}, headers={"X-Tenant": "tr1"}).status_code == 200
     assert client.post("/api/auth/login", data={"username": "dup@same.vn", "password": "pw"}, headers={"X-Tenant": "tr2"}).status_code == 200
+
+
+def test_c4_per_tenant_key_and_encryption(client, monkeypatch):
+    """C4: mỗi trường dùng ĐÚNG API key của mình; key được mã hóa khi lưu."""
+    import app.config as cfg
+    from app.core.crypto import decrypt_secret, encrypt_secret
+    from app.core.llm_context import set_request_tenant
+    from app.database import SessionLocal
+    from app.models import ApiKey, Tenant
+    from app.services import llm as llm_mod
+
+    # Mã hóa khứ hồi (khi có encryption_key).
+    monkeypatch.setattr(cfg.settings, "encryption_key", "test-secret-123")
+    enc = encrypt_secret("sk-ABC")
+    assert enc.startswith("enc:v1:") and decrypt_secret(enc) == "sk-ABC"
+
+    db = SessionLocal()
+    ta = Tenant(code="k4a", name="K4A"); tb = Tenant(code="k4b", name="K4B")
+    db.add_all([ta, tb]); db.commit()
+    aid, bid = ta.id, tb.id
+    db.add(ApiKey(provider="anthropic", name="A", api_key=encrypt_secret("KEY_A"),
+                  model="claude-opus-4-8", is_active=True, tenant_id=aid))
+    db.add(ApiKey(provider="openai", name="B", api_key=encrypt_secret("KEY_B"),
+                  model="gpt-4o", is_active=True, tenant_id=bid))
+    db.commit(); db.close()
+
+    set_request_tenant(aid)
+    try:
+        prov, key, _m = llm_mod._resolve()
+        assert prov == "anthropic" and key == "KEY_A"      # đúng key trường A + đã giải mã
+        set_request_tenant(bid)
+        prov, key, _m = llm_mod._resolve()
+        assert prov == "openai" and key == "KEY_B"          # đúng key trường B
+    finally:
+        set_request_tenant(None)
+
+
+def test_c4_per_tenant_quota(client, monkeypatch):
+    """C4: hạn mức token/ngày theo TRƯỜNG (tenants.llm_daily_token_quota)."""
+    import pytest
+
+    from app.core.llm_context import llm_scope
+    from app.database import SessionLocal
+    from app.models import LlmUsage, Tenant
+    from app.services import llm as llm_mod
+
+    db = SessionLocal()
+    t = Tenant(code="q4", name="Q4", llm_daily_token_quota=10)
+    db.add(t); db.commit(); tid = t.id
+    db.add(LlmUsage(provider="anthropic", model="m", total_tokens=20, tenant_id=tid))
+    db.commit(); db.close()
+
+    monkeypatch.setattr(llm_mod, "_resolve", lambda: ("anthropic", "k", "claude-opus-4-8"))
+    monkeypatch.setattr(llm_mod, "_raw_complete",
+                        lambda *a, **k: ("x", {"prompt": 1, "completion": 1, "total": 2}))
+    with llm_scope(tenant_id=tid):
+        with pytest.raises(llm_mod.LLMQuotaExceeded):
+            llm_mod.llm_complete("s", "u")
