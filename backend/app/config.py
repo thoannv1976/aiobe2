@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     gcs_prefix: str = "uploads/"
 
     cors_origins: str = "http://localhost:3000"
+    # Regex origin cho CORS (đa subdomain trường + Cloud Run). VD:
+    #   https://([a-z0-9-]+\.)?eduobe\.vn|https://.*\.run\.app
+    cors_origin_regex: str = ""
 
     # Multi-tenant (Nhóm C): tên miền gốc để suy tenant theo subdomain <code>.eduobe.vn
     base_domain: str = "eduobe.vn"
