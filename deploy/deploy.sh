@@ -119,7 +119,7 @@ gcloud run deploy "${API_SERVICE}" \
   --platform=managed --allow-unauthenticated \
   --add-cloudsql-instances="${CONN_NAME}" \
   --set-secrets="DATABASE_URL=obe-database-url:latest,JWT_SECRET=obe-jwt-secret:latest,ANTHROPIC_API_KEY=anthropic-api-key:latest" \
-  --set-env-vars="ANTHROPIC_MODEL=${ANTHROPIC_MODEL},CORS_ORIGINS=*" \
+  --set-env-vars="^@^ANTHROPIC_MODEL=${ANTHROPIC_MODEL}@CORS_ORIGIN_REGEX=https://([a-z0-9-]+\.)?eduobe\.vn|https://.*\.run\.app" \
   --timeout=900 --memory=1Gi --cpu=1
 
 API_URL="$(gcloud run services describe "${API_SERVICE}" --region="${REGION}" --format='value(status.url)')"
