@@ -155,6 +155,9 @@ def _record_usage(provider: str, model: str, usage: dict) -> None:
     scope = current_scope()
     db = SessionLocal()
     try:
+        # Gắn tenant cho session ghi usage → before_flush gán tenant_id (hoặc fallback mặc định).
+        if scope.get("tenant_id"):
+            db.info["tenant_id"] = scope["tenant_id"]
         db.add(LlmUsage(
             provider=provider, model=model,
             prompt_tokens=usage.get("prompt", 0),

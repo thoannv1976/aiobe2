@@ -73,7 +73,7 @@ def run_job(job_id: int) -> None:
             db.commit()
             return
         with llm_scope(user_id=job.created_by, program_id=job.program_id,
-                       course_id=job.course_id, job_id=job.id):
+                       course_id=job.course_id, job_id=job.id, tenant_id=job.tenant_id):
             result = handler(db, job)
         job.status = "done"
         job.progress = 100

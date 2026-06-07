@@ -12,10 +12,10 @@ _ctx: contextvars.ContextVar[dict] = contextvars.ContextVar("llm_ctx", default={
 
 
 @contextlib.contextmanager
-def llm_scope(user_id=None, program_id=None, course_id=None, job_id=None):
+def llm_scope(user_id=None, program_id=None, course_id=None, job_id=None, tenant_id=None):
     token = _ctx.set({
         "user_id": user_id, "program_id": program_id,
-        "course_id": course_id, "job_id": job_id,
+        "course_id": course_id, "job_id": job_id, "tenant_id": tenant_id,
     })
     try:
         yield

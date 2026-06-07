@@ -569,3 +569,59 @@ def test_cross_tenant_isolation(client):
     client.post(f"/api/programs/{pa}/plos", json={"code": "PLO1", "description": "x"}, headers=ha)
     assert len(client.get(f"/api/programs/{pa}/plos", headers=ha).json()) == 1
     assert client.get(f"/api/programs/{pa}/plos", headers=hb).json() == []
+
+
+def test_c2_create_user_inherits_tenant_and_email_per_tenant(client):
+    """C2: user mới kế thừa tenant của admin; cùng email dùng được ở 2 tenant khác nhau."""
+    from app.core.security import hash_password
+    from app.database import SessionLocal
+    from app.models import Tenant, User
+
+    db = SessionLocal()
+    tA = Tenant(code="c2a", name="C2 A"); tB = Tenant(code="c2b", name="C2 B")
+    db.add_all([tA, tB]); db.commit()
+    aid, bid = tA.id, tB.id
+    db.add(User(name="AdmA", email="adm@c2a.vn", password_hash=hash_password("pw"), role="admin", tenant_id=aid))
+    db.add(User(name="AdmB", email="adm@c2b.vn", password_hash=hash_password("pw"), role="admin", tenant_id=bid))
+    db.commit(); db.close()
+
+    def tok(e):
+        return client.post("/api/auth/login", data={"username": e, "password": "pw"}).json()["access_token"]
+
+    # Admin A tạo giảng viên email "lec@dup.vn" → kế thừa tenant A.
+    rA = client.post("/api/auth/users", headers={"Authorization": f"Bearer {tok('adm@c2a.vn')}"},
+                     json={"name": "L", "email": "lec@dup.vn", "password": "pw", "role": "lecturer"})
+    assert rA.status_code == 201, rA.text
+    # Admin B tạo user CÙNG email "lec@dup.vn" → vẫn được (unique theo tenant).
+    rB = client.post("/api/auth/users", headers={"Authorization": f"Bearer {tok('adm@c2b.vn')}"},
+                     json={"name": "L", "email": "lec@dup.vn", "password": "pw", "role": "lecturer"})
+    assert rB.status_code == 201, rB.text
+
+    db = SessionLocal()
+    rows = db.query(User).filter(User.email == "lec@dup.vn").execution_options(skip_tenant=True).all()
+    tenants = sorted(u.tenant_id for u in rows)
+    db.close()
+    assert tenants == sorted([aid, bid])  # mỗi tenant một bản ghi, gắn đúng tenant
+
+
+def test_c2_write_fallback_default_tenant(client):
+    """C2: ghi ngoài ngữ cảnh request (info không có tenant) → fallback tenant mặc định (tránh NULL)."""
+    from app.core import tenant as tmod
+    from app.database import SessionLocal
+    from app.models import Program
+
+    tmod.set_default_tenant_id(987654)  # tenant_id là Integer thường (không FK) → giá trị giả OK
+    try:
+        db = SessionLocal()
+        p = Program(name="Fallback", code="FB", is_deleted=False)
+        db.add(p)
+        db.commit()
+        pid = p.id
+        db.close()
+        db = SessionLocal()
+        tid = db.query(Program.tenant_id).filter(Program.id == pid)\
+            .execution_options(skip_tenant=True).scalar()
+        db.close()
+        assert tid == 987654
+    finally:
+        tmod.set_default_tenant_id(None)  # tránh ảnh hưởng test khác

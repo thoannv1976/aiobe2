@@ -39,6 +39,7 @@ def on_startup() -> None:
     # Dev tiện lợi (SQLite): tạo bảng nếu chưa có.
     if settings.database_url.startswith("sqlite"):
         Base.metadata.create_all(bind=engine)
+        _cache_default_tenant()
         return
     # Production (Postgres/Cloud SQL): tự chạy migration khi khởi động để schema luôn
     # khớp code, tránh lỗi 500 khi container deploy trước migrate job (idempotent, an toàn).
@@ -53,6 +54,22 @@ def on_startup() -> None:
         import logging
 
         logging.getLogger("uvicorn.error").warning("Auto-migrate khi startup thất bại: %s", e)
+    _cache_default_tenant()
+
+
+def _cache_default_tenant() -> None:
+    """Nạp id tenant mặc định vào bộ nhớ để fallback khi GHI ngoài ngữ cảnh request."""
+    try:
+        from sqlalchemy import text
+
+        from app.core.tenant import set_default_tenant_id
+
+        with engine.connect() as c:
+            tid = c.execute(text("SELECT id FROM tenants WHERE code = 'default'")).scalar()
+        if tid:
+            set_default_tenant_id(int(tid))
+    except Exception:  # noqa: BLE001
+        pass  # bảng tenants có thể chưa tồn tại (fresh dev) — bỏ qua
 
 
 @app.get("/api/health")

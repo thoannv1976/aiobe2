@@ -154,7 +154,8 @@ def generate_outline(
         return d.extracted_text or "" if d else ""
 
     try:
-        with llm_scope(user_id=user.id, program_id=course.program_id, course_id=course_id):
+        with llm_scope(user_id=user.id, program_id=course.program_id,
+                       course_id=course_id, tenant_id=user.tenant_id):
             gen = generate_outline_ai(
                 course={
                     "code": course.code, "name": course.name, "credits": course.credits,

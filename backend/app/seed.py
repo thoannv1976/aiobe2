@@ -32,6 +32,25 @@ def run() -> None:
             print("Đã có dữ liệu — bỏ qua seed.")
             return
 
+        # --- Tenant mặc định (multi-tenant): mọi dữ liệu seed gắn về tenant này ---
+        from datetime import datetime, timedelta
+
+        from app.core.tenant import set_default_tenant_id
+        from app.models import Tenant
+
+        tenant = db.query(Tenant).filter(Tenant.code == "default").first()
+        if not tenant:
+            now = datetime.utcnow()
+            tenant = Tenant(
+                code="default", name="Trường mặc định", is_enabled=True,
+                activated_at=now, valid_until=now + timedelta(days=365),
+            )
+            db.add(tenant)
+            db.flush()
+        # Gắn ngữ cảnh tenant cho session → before_flush tự gán tenant_id cho mọi bản ghi seed.
+        db.info["tenant_id"] = tenant.id
+        set_default_tenant_id(tenant.id)
+
         # --- Người dùng ---
         users = [
             User(name="Quản trị", email="admin@obe.vn", password_hash=hash_password("admin123"), role="admin"),

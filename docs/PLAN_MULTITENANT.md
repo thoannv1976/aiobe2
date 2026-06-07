@@ -250,8 +250,17 @@ Lưu trong `tenants.settings_json` (+ bảng phụ nếu lớn):
 
 ### Tiến độ thực thi
 - ✅ **C0 — Nền tảng dữ liệu**: bảng `tenants` (kèm `is_enabled`, `activated_at`, `valid_until`), thêm `tenant_id` nullable + index cho cả 28 bảng, tạo tenant mặc định, backfill toàn bộ dữ liệu cũ. Migration `9c3e5a7b1d2f`. **Không đổi hành vi app.**
-- ✅ **C1 — Cô lập dữ liệu ở tầng ứng dụng** (`app/core/tenant.py`): gắn tenant vào `Session.info` từ user đã xác thực; **auto-filter** mọi SELECT (`do_orm_execute` + `with_loader_criteria` biểu thức trực tiếp — tránh bẫy lambda-caching) và **auto-set** `tenant_id` khi ghi (`before_flush`); JWT mang `tenant_id`; tra cứu user lúc đăng nhập dùng `skip_tenant`; job nền set tenant từ `job.tenant_id`. Khi chưa có tenant (test/cũ) lớp tự tắt. **Có test cô lập chéo A↔B.** Chưa enforce NOT NULL/RLS (để C2).
-- ⏳ C2 → C5: theo §15.
+- ✅ **C1 — Cô lập dữ liệu ở tầng ứng dụng** (`app/core/tenant.py`): gắn tenant vào `Session.info` từ user đã xác thực; **auto-filter** mọi SELECT (`do_orm_execute` + `with_loader_criteria` biểu thức trực tiếp — tránh bẫy lambda-caching) và **auto-set** `tenant_id` khi ghi (`before_flush`); JWT mang `tenant_id`; tra cứu user lúc đăng nhập dùng `skip_tenant`; job nền set tenant từ `job.tenant_id`. Khi chưa có tenant (test/cũ) lớp tự tắt. **Có test cô lập chéo A↔B.**
+- ✅ **C2 — Siết chặt**:
+  - **Seed** tạo/gắn tenant mặc định cho mọi dữ liệu; **fallback tenant mặc định khi GHI ngoài request** (tránh `tenant_id` NULL) — cache id tenant mặc định lúc khởi động.
+  - **create_user** kế thừa tenant của admin (auto-set) + kiểm tra trùng email theo tenant.
+  - **Email duy nhất theo `(tenant_id, email)`** (model + migration).
+  - **NOT NULL `tenant_id`** và **Row-Level Security (RLS)** — *chỉ PostgreSQL* (migration `a1f2e3d4c5b6`, guard theo dialect; no-op trên SQLite). RLS policy "permissive-when-unset" + `SET LOCAL app.tenant_id` (qua `set_session_tenant` + listener `after_begin`) → chặn chéo ở tầng DB khi đã xác thực, không phá luồng đăng nhập/migration.
+  - LLM usage gắn `tenant_id` (qua `llm_scope`).
+  - **Tests**: kế thừa tenant + email theo tenant + fallback ghi (61 passed).
+  - ⚠️ *Cần kiểm thử RLS/NOT NULL trên Postgres staging* (môi trường dev hiện là SQLite nên 2 mục này là no-op khi test).
+  - ⚠️ *Gap tạm thời*: đăng nhập đang tra theo email toàn cục (`.first()`); khi 2 trường trùng email sẽ chưa phân biệt — **sẽ xử lý ở C3** (suy tenant theo subdomain trước khi tra user).
+- ⏳ C3 → C5: theo §15.
 
 ---
 

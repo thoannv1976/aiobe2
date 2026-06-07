@@ -33,11 +33,13 @@ def _now() -> datetime:
 # ---------------------------------------------------------------------------
 class User(Base):
     __tablename__ = "users"
+    # Email duy nhất THEO tenant (cùng email có thể tồn tại ở 2 trường khác nhau).
+    __table_args__ = (UniqueConstraint("tenant_id", "email", name="uq_users_tenant_email"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     tenant_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)  # multi-tenant (Nhóm C)
     name: Mapped[str] = mapped_column(String(255))
-    email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    email: Mapped[str] = mapped_column(String(255), index=True)
     password_hash: Mapped[str] = mapped_column(String(255))
     role: Mapped[str] = mapped_column(String(50), default="lecturer")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)

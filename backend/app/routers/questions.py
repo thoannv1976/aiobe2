@@ -170,7 +170,8 @@ def generate_questions(
     clo_materials = _gather_clo_materials(db, course_id, clos)
 
     try:
-        with llm_scope(user_id=user.id, program_id=course.program_id, course_id=course_id):
+        with llm_scope(user_id=user.id, program_id=course.program_id,
+                       course_id=course_id, tenant_id=user.tenant_id):
             gen = generate_questions_ai(
                 course={"code": course.code, "name": course.name},
                 clos=[{"code": c.code, "description": c.description, "bloom_level": c.bloom_level or ""} for c in clos],
