@@ -23,12 +23,16 @@ from app.routers import (
 
 app = FastAPI(title=settings.app_name, version="0.1.0")
 
+_origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
+_allow_all = "*" in _origins
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[o.strip() for o in settings.cors_origins.split(",") if o.strip()],
+    allow_origins=_origins,
     # Cho phép theo regex để hỗ trợ ĐA SUBDOMAIN trường (*.eduobe.vn) và URL Cloud Run (*.run.app).
     allow_origin_regex=settings.cors_origin_regex or None,
-    allow_credentials=True,
+    # Theo chuẩn CORS, origin "*" KHÔNG đi cùng credentials. App dùng JWT ở header (không cookie)
+    # nên khi để "*" ta tắt credentials để trình duyệt chấp nhận (tránh 'Failed to fetch').
+    allow_credentials=not _allow_all,
     allow_methods=["*"],
     allow_headers=["*"],
 )

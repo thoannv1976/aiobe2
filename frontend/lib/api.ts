@@ -34,6 +34,15 @@ async function handle(res: Response) {
   return ct.includes("application/json") ? res.json() : res.text();
 }
 
+async function safeFetch(url: string, init: RequestInit): Promise<Response> {
+  try {
+    return await fetch(url, init);
+  } catch (e: any) {
+    // Lỗi mạng (CORS / sai URL API / backend down) → nêu rõ URL để dễ chẩn đoán.
+    throw new Error(`Không kết nối được API (${url}). Kiểm tra NEXT_PUBLIC_API_BASE / CORS. [${e?.message || "network error"}]`);
+  }
+}
+
 export async function api(path: string, opts: RequestInit = {}) {
   const token = getToken();
   const headers: Record<string, string> = {
@@ -41,7 +50,7 @@ export async function api(path: string, opts: RequestInit = {}) {
     ...(opts.headers as Record<string, string>),
   };
   if (token) headers["Authorization"] = `Bearer ${token}`;
-  const res = await fetch(`${API_BASE}${path}`, { ...opts, headers });
+  const res = await safeFetch(`${API_BASE}${path}`, { ...opts, headers });
   return handle(res);
 }
 
@@ -71,8 +80,9 @@ export async function apiUpload(path: string, formData: FormData) {
   return handle(res);
 }
 
-export async function login(email: string, password: string) {  const body = new URLSearchParams({ username: email, password });
-  const res = await fetch(`${API_BASE}/api/auth/login`, {
+export async function login(email: string, password: string) {
+  const body = new URLSearchParams({ username: email, password });
+  const res = await safeFetch(`${API_BASE}/api/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body,
