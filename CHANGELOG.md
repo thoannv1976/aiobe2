@@ -1,5 +1,16 @@
 # Nhật ký phiên bản — AIOBE / OBE-AUN-QA
 
+## v1.4.0 — 2026-06-08 — Đa người thuê (Nhóm C: multi-tenant)
+
+> Chuyển từ "1 trường = 1 triển khai" sang "1 codebase phục vụ nhiều trường" (kế hoạch: `docs/PLAN_MULTITENANT.md`).
+
+- **C0 — Nền tảng dữ liệu**: bảng `tenants` + cột `tenant_id` cho cả 28 bảng nghiệp vụ; tenant mặc định + backfill.
+- **C1 — Cô lập tầng ứng dụng**: auto-filter mọi truy vấn + auto-set `tenant_id` khi ghi (theo user đăng nhập); JWT mang `tenant_id`. Test cô lập chéo A↔B.
+- **C2 — Siết chặt**: `NOT NULL` + **Row-Level Security** (PostgreSQL) + email duy nhất theo `(tenant_id, email)`; seed/create-user gán tenant.
+- **C3 — Định tuyến & vận hành**: subdomain `*.eduobe.vn` → suy tenant; **đăng nhập theo trường**; vai trò **Super-Admin** + API cấp phát/gia hạn/tạm ngừng tenant; **billing theo thời gian** (365 ngày, hết hạn chặn dùng, Super-Admin gia hạn); branding theo trường; trang `/admin/tenants`.
+- **C4 — Theo trường**: mỗi trường **tự nạp & dùng đúng API key của mình**; **mã hóa key** (Fernet, bật bằng `ENCRYPTION_KEY`); **hạn mức token/ngày theo trường**; chi phí AI `by_tenant`; **fairness** job theo trường.
+- ⏳ C5 (đang làm): export/backup theo tenant + quan trắc + pen-test cô lập.
+
 ## v1.3.1 — 2026-06-06
 
 ### Thêm / chỉnh
