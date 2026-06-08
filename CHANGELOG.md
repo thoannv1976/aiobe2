@@ -1,5 +1,23 @@
 # Nhật ký phiên bản — AIOBE / OBE-AUN-QA
 
+## v1.5.1 — 2026-06-10
+
+### Sửa lỗi
+- **Đăng nhập 500 chập chờn trên Postgres**: gate RLS sau cờ `RLS_ENABLED` (mặc định tắt — cô lập vẫn
+  đảm bảo bằng lớp ứng dụng C1); `get_db` rollback khi lỗi (không "đầu độc" connection pool); ghi
+  traceback ra log.
+- **CORS "Failed to fetch"**: hỗ trợ `CORS_ORIGIN_REGEX` (*.eduobe.vn, *.run.app); `CORS_ORIGINS='*'`
+  tự tắt credentials để trình duyệt chấp nhận.
+- **Phân quyền tenant**: endpoint chỉ-Super-Admin từ chối admin trường; bootstrap `super@obe.vn` kể cả
+  khi DB đã có dữ liệu; menu "🏛 Quản trị nền tảng" cho Super-Admin.
+- **Lỗi "Unexpected end of JSON input" khi Xóa**: không parse JSON body rỗng/204.
+- **Test trường con không cần subdomain**: tham số URL `?tenant=<mã>` (gửi header `X-Tenant`).
+
+### Giao diện
+- Nâng cấp **toàn cục**: theme thương hiệu + font, typography, input/focus, `.card/.btn/.badge`,
+  nền gradient; **Nav** sticky/blur + logo + link active + badge vai trò; trang chủ hero; đăng nhập;
+  tinh chỉnh sâu **Danh sách/Chi tiết CTĐT, Đề cương, Ngân hàng câu hỏi**.
+
 ## v1.5.0 — 2026-06-09 — Hoàn tất multi-tenant (Nhóm C C5)
 
 - **C5 — Vận hành & tuân thủ**: export dữ liệu theo trường (zip JSON, backup/bàn giao), **offboarding** (xóa cứng toàn bộ dữ liệu một trường, cần xác nhận), **script `verify_rls.py`** pen-test cô lập RLS trên Postgres, quan trắc theo trường (audit/usage/jobs gắn `tenant_id`), trang `/admin/tenants` thêm Export & Xóa.

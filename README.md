@@ -1,8 +1,8 @@
 # Hệ thống Quản lý OBE / AUN-QA
 
-> **Phiên bản hiện tại: v1.5.0** (2026-06-09) — xem [`CHANGELOG.md`](CHANGELOG.md).
-> Quy mô: 16 màn hình · 139 API endpoint · 29 bảng dữ liệu · 12 migration · 66 test.
-> **Multi-tenant hoàn tất (Nhóm C C0–C5)**: 1 codebase phục vụ nhiều trường — subdomain, cô lập 2 lớp (app + RLS), Super-Admin, billing theo thời gian, key AI/chi phí/hạn mức theo trường, export/offboarding. Kế hoạch: [`docs/PLAN_MULTITENANT.md`](docs/PLAN_MULTITENANT.md).
+> **Phiên bản hiện tại: v1.5.1** (2026-06-10) — xem [`CHANGELOG.md`](CHANGELOG.md).
+> Quy mô: 16 màn hình · 139 API endpoint · 29 bảng dữ liệu · 12 migration · 67 test.
+> v1.5.1: vá lỗi đăng nhập (Postgres/RLS) + CORS + phân quyền tenant; **giao diện mới chuyên nghiệp**; multi-tenant đầy đủ (C0–C5). Kế hoạch: [`docs/PLAN_MULTITENANT.md`](docs/PLAN_MULTITENANT.md).
 
 Web app quản lý chuỗi sản phẩm học thuật theo chuẩn **OBE (Outcome-Based Education)** và kiểm định **AUN-QA**:
 
