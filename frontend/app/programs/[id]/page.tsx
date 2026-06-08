@@ -94,20 +94,28 @@ export default function ProgramDetail() {
   if (!program) return <p>{err || "Đang tải..."}</p>;
 
   return (
-    <div>
-      <h1 className="text-2xl font-bold">
-        {program.name} <span className="text-slate-400">({program.code})</span>
-      </h1>
-      {err && <p className="mt-2 text-sm text-red-600">{err}</p>}
+    <div className="space-y-6">
+      <div>
+        <Link href="/programs" className="text-sm text-indigo-600 hover:underline">← Danh sách CTĐT</Link>
+        <h1 className="mt-1">
+          {program.name} <span className="font-normal text-slate-400">({program.code})</span>
+        </h1>
+        <p className="mt-1 text-sm text-slate-500">
+          {[program.level, program.year, program.faculty].filter(Boolean).join(" · ") || "Chương trình đào tạo"}
+        </p>
+      </div>
+      {err && (
+        <p className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-600">{err}</p>
+      )}
 
       {/* Coverage banner */}
       {coverage && (
         <div
-          className={`mt-4 rounded border p-3 text-sm ${
-            coverage.ok ? "border-green-300 bg-green-50" : "border-red-300 bg-red-50"
+          className={`rounded-lg border p-3 text-sm ${
+            coverage.ok ? "border-green-300 bg-green-50 text-green-800" : "border-red-300 bg-red-50"
           }`}
         >
-          <b>Kiểm tra độ phủ PLO:</b> {coverage.ok ? "Đạt" : "Có lỗi"}
+          <b>Kiểm tra độ phủ PLO:</b> {coverage.ok ? "Đạt ✓" : "Có lỗi"}
           {coverage.errors?.map((e: string) => (
             <div key={e} className="text-red-700">• {e}</div>
           ))}
@@ -117,8 +125,8 @@ export default function ProgramDetail() {
         </div>
       )}
 
-      <section className="mt-6">
-        <div className="mb-2 flex items-center justify-between">
+      <section className="card">
+        <div className="mb-3 flex items-center justify-between">
           <h2 className="text-lg font-semibold">Chuẩn đầu ra (PLO) & Chỉ báo (PI)</h2>
           <button
             onClick={reviewPlos}
@@ -183,12 +191,12 @@ export default function ProgramDetail() {
         </ul>
       </section>
 
-      <section className="mt-6">
-        <h2 className="mb-2 text-lg font-semibold">Ma trận Học phần × PLO (I/R/M)</h2>
+      <section className="card">
+        <h2 className="mb-3">Ma trận Học phần × PLO (I/R/M)</h2>
         <div className="overflow-x-auto">
-          <table className="min-w-full border bg-white text-sm">
+          <table className="min-w-full overflow-hidden rounded-lg border border-slate-200 bg-white text-sm">
             <thead>
-              <tr className="bg-slate-100">
+              <tr className="bg-slate-50 text-slate-600">
                 <th className="border p-2 text-center">STT</th>
                 <th className="border p-2 text-left">Học phần</th>
                 {plos.map((p) => (
@@ -296,7 +304,7 @@ export default function ProgramDetail() {
         )}
       </section>
 
-      <section className="mt-6">
+      <section className="card">
         <button
           onClick={async () =>
             setReport(await api(`/api/programs/${id}/coverage-report`))
