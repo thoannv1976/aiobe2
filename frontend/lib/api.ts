@@ -62,8 +62,13 @@ async function handle(res: Response) {
     } catch {}
     throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
   }
+  // 204 No Content hoặc body rỗng (vd endpoint Xóa) → không parse JSON (tránh lỗi
+  // 'Unexpected end of JSON input').
+  if (res.status === 204) return null;
   const ct = res.headers.get("content-type") || "";
-  return ct.includes("application/json") ? res.json() : res.text();
+  if (!ct.includes("application/json")) return res.text();
+  const text = await res.text();
+  return text ? JSON.parse(text) : null;
 }
 
 async function safeFetch(url: string, init: RequestInit): Promise<Response> {
