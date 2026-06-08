@@ -32,55 +32,70 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="mx-auto mt-10 max-w-md rounded-lg border bg-white p-8 shadow-sm">
-      <h1 className="mb-6 text-2xl font-bold">Đăng nhập</h1>
-      {tenant ? (
-        <div className="mb-4 rounded border border-indigo-200 bg-indigo-50 p-2 text-xs text-indigo-800">
-          Đang đăng nhập vào trường: <b>{tenant}</b>
-          <button
-            onClick={() => { setTenantCode(null); setTenant(null); }}
-            className="ml-2 rounded bg-white px-2 py-0.5 underline"
-          >
-            Bỏ chọn (về nền tảng)
-          </button>
+    <div className="mx-auto mt-10 max-w-md">
+      <div className="mb-6 flex flex-col items-center text-center">
+        <span className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-600 to-violet-500 text-lg font-bold text-white shadow-soft">
+          OB
+        </span>
+        <h1 className="mt-3">Đăng nhập EduOBE</h1>
+        <p className="mt-1 text-sm text-slate-500">Nền tảng OBE / AUN-QA</p>
+      </div>
+      <div className="rounded-2xl border border-slate-200 bg-white p-8 shadow-soft">
+        {tenant ? (
+          <div className="mb-4 flex items-center justify-between gap-2 rounded-lg border border-indigo-200 bg-indigo-50 p-2.5 text-xs text-indigo-800">
+            <span>Đăng nhập vào trường: <b>{tenant}</b></span>
+            <button
+              onClick={() => { setTenantCode(null); setTenant(null); }}
+              className="shrink-0 rounded bg-white px-2 py-0.5 underline hover:bg-indigo-100"
+            >
+              Bỏ chọn
+            </button>
+          </div>
+        ) : (
+          <p className="mb-4 text-xs text-slate-400">
+            Mẹo: thêm <code className="rounded bg-slate-100 px-1">?tenant=&lt;mã&gt;</code> vào URL để vào đúng trường con.
+          </p>
+        )}
+        <form onSubmit={submit} className="space-y-4">
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-700">Email</label>
+            <input
+              className="w-full"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="email@truong.edu.vn"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-700">Mật khẩu</label>
+            <input
+              className="w-full"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="••••••••"
+            />
+          </div>
+          {err && (
+            <p className="rounded-lg border border-red-200 bg-red-50 p-2 text-sm text-red-600">{err}</p>
+          )}
+          <button className="btn btn-primary w-full">Đăng nhập</button>
+        </form>
+        <div className="mt-6 border-t border-slate-100 pt-4 text-xs text-slate-500">
+          <p className="mb-2 font-semibold text-slate-600">Tài khoản mẫu (bấm để điền):</p>
+          <div className="flex flex-wrap gap-2">
+            {ACCOUNTS.map(([e, p, label]) => (
+              <button
+                key={e}
+                type="button"
+                onClick={() => { setEmail(e); setPassword(p); }}
+                className="rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1 hover:bg-slate-100"
+              >
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
-      ) : (
-        <p className="mb-4 text-xs text-slate-400">
-          Mẹo: thêm <code>?tenant=&lt;mã trường&gt;</code> vào URL để đăng nhập đúng trường con
-          (vd <code>?tenant=neu</code>). Để trống = nền tảng / trường mặc định.
-        </p>
-      )}
-      <form onSubmit={submit} className="space-y-4">
-        <input
-          className="w-full rounded border p-2"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          placeholder="Email"
-        />
-        <input
-          className="w-full rounded border p-2"
-          type="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          placeholder="Mật khẩu"
-        />
-        {err && <p className="text-sm text-red-600">{err}</p>}
-        <button className="w-full rounded bg-indigo-600 p-2 text-white">Đăng nhập</button>
-      </form>
-      <div className="mt-6 text-xs text-slate-500">
-        <p className="mb-1 font-semibold">Tài khoản mẫu (bấm để điền):</p>
-        {ACCOUNTS.map(([e, p, label]) => (
-          <button
-            key={e}
-            onClick={() => {
-              setEmail(e);
-              setPassword(p);
-            }}
-            className="mr-2 mb-1 rounded bg-slate-100 px-2 py-1 hover:bg-slate-200"
-          >
-            {label}
-          </button>
-        ))}
       </div>
     </div>
   );
