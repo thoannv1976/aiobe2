@@ -397,7 +397,7 @@ export default function OutlineEditor() {
   return (
     <div className="space-y-8">
       {/* 1. Header */}
-      <section className="rounded border bg-white p-4 shadow-sm">
+      <section className="card">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h1 className="text-2xl font-bold">
             Đề cương #{outline.id}{" "}
@@ -410,7 +410,7 @@ export default function OutlineEditor() {
             <button
               onClick={qaReview}
               disabled={qaBusy}
-              className="rounded bg-green-600 px-4 py-2 text-white disabled:opacity-50"
+              className="btn bg-green-600 text-white hover:bg-green-700 disabled:opacity-50"
             >
               {qaBusy ? "AI đang kiểm tra..." : "✨ Kiểm tra chất lượng (AI)"}
             </button>
@@ -429,7 +429,7 @@ export default function OutlineEditor() {
             {flow && (
               <button
                 onClick={() => changeStatus(flow.to)}
-                className="rounded bg-indigo-600 px-4 py-2 text-white"
+                className="btn btn-primary"
               >
                 {flow.label}
               </button>
@@ -503,7 +503,7 @@ export default function OutlineEditor() {
           <div className="mb-2 flex items-center justify-between">
             <b>Kết quả kiểm tra chất lượng (AI)</b>
             {typeof qaResult.score === "number" && (
-              <span className="rounded bg-indigo-600 px-2 py-1 text-white">
+              <span className="btn btn-primary px-2 py-1 text-xs">
                 Điểm: {qaResult.score}/100
               </span>
             )}
@@ -555,7 +555,7 @@ export default function OutlineEditor() {
       )}
 
       {/* 3. Thông tin chung */}
-      <section className="rounded border bg-white p-4 shadow-sm">
+      <section className="card">
         <h2 className="mb-3 text-lg font-semibold">Thông tin chung</h2>
         <label className="mb-1 block text-sm font-medium">Mô tả học phần</label>
         <textarea
@@ -588,14 +588,14 @@ export default function OutlineEditor() {
         <button
           onClick={saveGeneral}
           disabled={!editable}
-          className="rounded bg-indigo-600 px-4 py-2 text-white disabled:opacity-50"
+          className="btn btn-primary disabled:opacity-50"
         >
           Lưu
         </button>
       </section>
 
       {/* 4. CLO */}
-      <section className="rounded border bg-white p-4 shadow-sm">
+      <section className="card">
         <h2 className="mb-3 text-lg font-semibold">Chuẩn đầu ra học phần (CLO)</h2>
         <div className="overflow-x-auto">
           <table className="min-w-full border bg-white text-sm">
@@ -667,7 +667,7 @@ export default function OutlineEditor() {
             </select>
             <button
               onClick={addClo}
-              className="rounded bg-indigo-600 px-4 py-2 text-white"
+              className="btn btn-primary"
             >
               Thêm CLO
             </button>
@@ -676,7 +676,7 @@ export default function OutlineEditor() {
       </section>
 
       {/* 5. Ma trận CLO×PLO */}
-      <section className="rounded border bg-white p-4 shadow-sm">
+      <section className="card">
         <h2 className="mb-3 text-lg font-semibold">Ma trận CLO × PLO (I/R/M)</h2>
         <div className="overflow-x-auto">
           <table className="min-w-full border bg-white text-sm">
@@ -730,7 +730,7 @@ export default function OutlineEditor() {
       </section>
 
       {/* 6. Đánh giá */}
-      <section className="rounded border bg-white p-4 shadow-sm">
+      <section className="card">
         <h2 className="mb-3 text-lg font-semibold">Đánh giá</h2>
         <div className="overflow-x-auto">
           <table className="min-w-full border bg-white text-sm">
@@ -932,7 +932,7 @@ export default function OutlineEditor() {
               />
               <button
                 onClick={addAssessment}
-                className="rounded bg-indigo-600 px-4 py-2 text-white"
+                className="btn btn-primary"
               >
                 Thêm đánh giá
               </button>
@@ -954,7 +954,7 @@ export default function OutlineEditor() {
       </section>
 
       {/* 7. Kế hoạch giảng dạy */}
-      <section className="rounded border bg-white p-4 shadow-sm">
+      <section className="card">
         <h2 className="mb-3 text-lg font-semibold">Kế hoạch giảng dạy</h2>
         <div className="overflow-x-auto">
           <table className="min-w-full border bg-white text-sm">
@@ -1014,7 +1014,7 @@ export default function OutlineEditor() {
               />
               <button
                 onClick={addLesson}
-                className="rounded bg-indigo-600 px-4 py-2 text-white"
+                className="btn btn-primary"
               >
                 Thêm buổi học
               </button>

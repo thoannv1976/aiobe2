@@ -698,7 +698,7 @@ export default function QuestionsPage() {
       {/* Thống kê */}
       {stats && (
         <section className="grid gap-3 text-sm sm:grid-cols-3">
-          <div className="rounded border bg-white p-4 shadow-sm">
+          <div className="card">
             <b>Theo CLO (tổng {stats.total})</b>
             <div className="mt-2 space-y-1">
               {clos.map((c) => {
@@ -718,7 +718,7 @@ export default function QuestionsPage() {
               )}
             </div>
           </div>
-          <div className="rounded border bg-white p-4 shadow-sm">
+          <div className="card">
             <b>Theo Bloom</b>
             <div className="mt-2 space-y-1">
               {Object.entries(stats.by_bloom).map(([k, v]) => (
@@ -731,7 +731,7 @@ export default function QuestionsPage() {
               )}
             </div>
           </div>
-          <div className="rounded border bg-white p-4 shadow-sm">
+          <div className="card">
             <b>Theo độ khó</b>
             <div className="mt-2 space-y-1">
               {Object.entries(stats.by_difficulty).map(([k, v]) => (
@@ -836,7 +836,7 @@ export default function QuestionsPage() {
       </section>
 
       {/* Form thêm/sửa câu hỏi */}
-      <section className="rounded border bg-white p-4 shadow-sm">
+      <section className="card">
         <h2 className="mb-3 text-lg font-semibold">
           {editingId ? `Sửa câu hỏi #${editingId}` : "Thêm câu hỏi"}
         </h2>
@@ -948,7 +948,7 @@ export default function QuestionsPage() {
         <div className="mt-3 flex gap-2">
           <button
             onClick={saveQuestion}
-            className="rounded bg-indigo-600 px-4 py-2 text-white"
+            className="btn btn-primary"
           >
             Lưu
           </button>
@@ -1437,7 +1437,7 @@ export default function QuestionsPage() {
         </div>
 
         {/* Form tạo ma trận */}
-        <div className="rounded border bg-white p-4 shadow-sm">
+        <div className="card">
           <h3 className="mb-3 font-semibold">Tạo ma trận mới</h3>
           <label className="text-sm">
             Tên ma trận
@@ -1556,7 +1556,7 @@ export default function QuestionsPage() {
             </button>
             <button
               onClick={createMatrix}
-              className="rounded bg-indigo-600 px-4 py-2 text-white"
+              className="btn btn-primary"
             >
               Tạo ma trận
             </button>
